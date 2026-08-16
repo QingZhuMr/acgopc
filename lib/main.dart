@@ -443,31 +443,35 @@ class _HomePageState extends State<HomePage> {
     return 0;
   }
 
-  late final List<_NavItem> _navItems = [
-    _NavItem(Icons.space_dashboard_rounded, '广场', _HomeView(user: widget.user)),
-    _NavItem(
-      Icons.person_outline,
-      '个人中心',
-      _ProfileView(
-        user: widget.user,
-        onLogout: widget.onLogout,
-        onUserChanged: (_) {
-          // 个人中心修改资料（昵称/头像）后触发刷新，让左侧头像等同步更新。
-          // _ProfileView 会直接更新共享的 user map，这里只需触发 rebuild。
-          if (mounted) setState(() {});
-        },
-      ),
-    ),
-    _NavItem(
-      Icons.settings_outlined,
-      '',
-      _SettingsView(
-        theme: widget.theme,
-        user: widget.user,
-        onLogout: widget.onLogout,
-      ),
-    ),
-  ];
+  // 注意：用 getter 而非 late final，确保每次 build 时 `_ProfileView.active`
+  // 都能随 `_currentIndex` 实时更新（切到个人中心时刷新收藏列表）。
+  List<_NavItem> get _navItems => [
+        _NavItem(
+            Icons.space_dashboard_rounded, '广场', _HomeView(user: widget.user)),
+        _NavItem(
+          Icons.person_outline,
+          '个人中心',
+          _ProfileView(
+            user: widget.user,
+            onLogout: widget.onLogout,
+            active: _currentIndex == 1,
+            onUserChanged: (_) {
+              // 个人中心修改资料（昵称/头像）后触发刷新，让左侧头像等同步更新。
+              // _ProfileView 会直接更新共享的 user map，这里只需触发 rebuild。
+              if (mounted) setState(() {});
+            },
+          ),
+        ),
+        _NavItem(
+          Icons.settings_outlined,
+          '',
+          _SettingsView(
+            theme: widget.theme,
+            user: widget.user,
+            onLogout: widget.onLogout,
+          ),
+        ),
+      ];
 
   /// 导航栏固定宽度（与顶栏左侧分色宽度一致）
   static const double _railWidth = 72;
@@ -1566,10 +1570,16 @@ class _ProfileView extends StatefulWidget {
   /// 资料变更（昵称/头像）回调，用于触发主页面刷新
   final ValueChanged<Map<String, dynamic>> onUserChanged;
 
+  /// 当前是否处于显示状态（个人中心 tab 被选中时为 true）
+  ///
+  /// 用于在每次切换到个人中心时刷新收藏列表（按需拉取，非定时轮询）。
+  final bool active;
+
   const _ProfileView({
     required this.user,
     required this.onLogout,
     required this.onUserChanged,
+    this.active = true,
   });
 
   @override
@@ -1623,7 +1633,7 @@ class _ProfileViewState extends State<_ProfileView> {
   // ===== 我的收藏 =====
   final List<Map<String, dynamic>> _favorites = [];
   int _favPage = 1;
-  bool _favLoading = true;
+  bool _favLoading = false;
   bool _favLoadingMore = false;
   bool _favAllLoaded = false;
   bool _favLoadFailed = false;
@@ -1633,8 +1643,18 @@ class _ProfileViewState extends State<_ProfileView> {
     super.initState();
     // 监听钱包余额推送（充值到账后 WS 实时刷新熊爪余额）
     WsService.instance.onWallet = _onWalletPushed;
-    // 加载我的收藏列表
-    _loadFavorites();
+    // 加载我的收藏列表（首次进入个人中心）
+    if (widget.active) _loadFavorites();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfileView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 从其他 tab 切回个人中心（active 由 false → true）时刷新收藏列表，
+    // 保证「广场里收藏/取消收藏」后切回来能看到最新数据（按需拉取，无轮询开销）。
+    if (widget.active && !oldWidget.active) {
+      _loadFavorites();
+    }
   }
 
   @override
@@ -1829,10 +1849,10 @@ class _ProfileViewState extends State<_ProfileView> {
                     padding: const EdgeInsets.only(left: 2, bottom: 12),
                     child: Row(
                       children: [
-                        Icon(Icons.bookmark_border,
-                            size: 18, color: kPrimary),
-                        const SizedBox(width: 6),
-                        Text('我的收藏',
+                        // Icon(Icons.bookmark_border,
+                        //     size: 18, color: kPrimary),
+                        // const SizedBox(width: 6),
+                        Text('收藏',
                             style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
@@ -1909,6 +1929,7 @@ class _ProfileViewState extends State<_ProfileView> {
       _favLoadFailed = false;
       _favPage = 1;
     });
+    if (!mounted) return;
     try {
       final resp = await ApiClient.instance
           .getMyFavorites(page: 1, pageSize: 12)
