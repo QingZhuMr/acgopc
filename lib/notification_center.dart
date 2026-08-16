@@ -1,0 +1,143 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+
+import 'api_client.dart';
+import 'notify.dart';
+import 'system_notifier.dart';
+
+/// 客户端通知中心（单例，ChangeNotifier）
+///
+/// 统一管理「帖子回复通知」：
+///   - 未读数（铃铛角标）
+///   - 定时轮询未读数（WS 不在线 / 断线时的兜底）
+///   - 收到 WS `reply_notice` 推送时：弹应用内通知 + Windows 系统通知 + 刷新角标
+///
+/// 生命周期：登录成功后 `start()`，退出登录 `stop()`。
+class NotificationCenter extends ChangeNotifier {
+  NotificationCenter._();
+
+  static final NotificationCenter instance = NotificationCenter._();
+
+  /// 未读通知数（铃铛角标）
+  int _unread = 0;
+  int get unread => _unread;
+
+  /// 定时轮询定时器
+  Timer? _pollTimer;
+
+  /// 已处理的 WS 推送（去重，避免同一条重复弹窗）
+  final Set<int> _seenIds = {};
+
+  /// 当前是否有登录用户（控制轮询开关）
+  bool _active = false;
+
+  /// 跳转帖子详情的回调（由 main.dart 注入，避免通知中心依赖具体页面构造）
+  void Function(int postId, String postContent)? onOpenPost;
+
+  /// 启动通知中心（登录成功后调用）
+  ///
+  /// 初始化系统通知插件 + 拉取一次未读数 + 启动定时轮询。
+  void start({
+    void Function(int postId, String postContent)? onOpenPost,
+  }) {
+    this.onOpenPost = onOpenPost;
+    _active = true;
+    // 初始化 Windows 系统通知（失败不影响）
+    SystemNotifier.instance.init();
+    // 启动时立即拉取一次未读数
+    _fetchUnread();
+    // 定期轮询未读数（兜底：WS 推送可能因断线丢失）
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_active) _fetchUnread();
+    });
+  }
+
+  /// 停止通知中心（退出登录时调用）
+  void stop() {
+    _active = false;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _unread = 0;
+    _seenIds.clear();
+    notifyListeners();
+  }
+
+  /// 公开：主动拉取未读数并刷新角标（通知页关闭/标记已读后调用）
+  Future<void> fetchUnreadForce() async {
+    if (!_active) return;
+    await _fetchUnread();
+  }
+
+  /// 拉取未读数（定时轮询 / 刷新角标）
+  Future<void> _fetchUnread() async {
+    try {
+      final resp = await ApiClient.instance
+          .getNotificationUnreadCount()
+          .timeout(const Duration(seconds: 8));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (json['code'] == 0) {
+        final data = json['data'] as Map<String, dynamic>? ?? {};
+        final count = (data['unread_count'] as num?)?.toInt() ?? 0;
+        if (count != _unread) {
+          _unread = count;
+          notifyListeners();
+        }
+      }
+    } catch (_) {
+      // 网络异常忽略，下轮重试
+    }
+  }
+
+  /// 收到 WS reply_notice 推送
+  ///
+  /// 弹应用内通知 + 系统通知，并刷新角标。
+  void handleWsReply(Map<String, dynamic> notification) {
+    // 解析
+    final id = (notification['id'] as num?)?.toInt() ?? 0;
+    final type = (notification['type'] as num?)?.toInt() ?? 1;
+    final fromName = (notification['from_nickname'] as String?) ?? '有人';
+    final commentContent = (notification['comment_content'] as String?) ?? '';
+    final postContent = (notification['post_content'] as String?) ?? '';
+    final postId = (notification['post_id'] as num?)?.toInt() ?? 0;
+
+    // 去重：同一条推送不重复弹窗
+    if (id > 0) {
+      if (_seenIds.contains(id)) return;
+      _seenIds.add(id);
+    }
+
+    // 标题：type=1 评论了我的帖子，type=2 回复了我的评论
+    final title = type == 2 ? '$fromName 回复了你' : '$fromName 评论了你的帖子';
+    final body = commentContent.isNotEmpty ? commentContent : postContent;
+
+    // 应用内通知（前台可见）：第一行标题 + 第二行动态正文摘要
+    NotifyStack.notify(
+      title: title,
+      message: body,
+      onTap: postId > 0 ? () => _openPost(postId, postContent) : null,
+      persistent: false,
+    );
+
+    // Windows 系统通知（Toast）：窗口被遮挡/托盘时也能看到，点击可跳转帖子
+    SystemNotifier.instance.show(
+      title: title,
+      subtitle: '耶熊',
+      body: body,
+      onClick: postId > 0 ? () => _openPost(postId, postContent) : null,
+    );
+
+    // 刷新角标
+    _unread += 1;
+    notifyListeners();
+  }
+
+  /// 跳转帖子详情（应用内通知点击）
+  void _openPost(int postId, String postContent) {
+    final cb = onOpenPost;
+    if (cb != null) {
+      cb(postId, postContent);
+    }
+  }
+}

@@ -1,0 +1,37 @@
+# ACGO PC 客户端（Flutter Windows Desktop Demo）
+# 这是一个简单的 Windows 桌面 Demo，用于演示 Flutter 跨端能力
+name: acgopc
+description: ACGO PC 桌面客户端 Demo
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  window_manager: ^0.3.9
+  tray_manager: ^0.2.0
+  http: ^1.1.0
+  encrypt: ^5.0.3
+  crypto: ^3.0.3
+  web_socket_channel: ^2.4.0
+  file_picker: ^8.0.0
+  crop_image_pro: ^1.2.0
+  silky_scroll: ^2.6.4
+  local_notifier: ^0.1.5
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/app_logo.png
+    - assets/images/desktop_icon.png
+    - assets/images/app_icon.ico
+    - assets/images/logo_white.png

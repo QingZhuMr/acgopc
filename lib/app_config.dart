@@ -1,0 +1,118 @@
+import 'dart:io';
+
+/// 应用全局配置
+///
+/// 集中管理应用名称、接口地址、目录名、图片资源等可复用变量。
+/// 其他文件统一从本类取值，避免散落硬编码，改一处全局生效。
+abstract final class AppConfig {
+  /// 应用中文名称（界面展示用）
+  static const String appName = '耶熊';
+
+  /// 应用英文名称（目录名、进程名、配置 key 等）
+  static const String appNameEn = 'Yeahbear';
+
+  /// 应用版本
+  static const String appVersion = '0.1.0';
+
+  /// 后端 API 接口地址（对接 api 应用）
+  /// 生产环境改为 https://你的域名
+  static const String apiBase = 'http://127.0.1.3';
+
+  /// WebSocket 实时推送地址（完整 URL，含 scheme 与可选 path）
+  ///
+  /// 由服务端 `user/domain` 接口返回的 `ws_url` 决定，客户端启动时写入：
+  ///  - 开发环境：`ws://127.0.1.3:2346`（直连 Workerman）
+  ///  - 生产环境：`wss://api域名/ws`（经 Nginx 反向代理）
+  ///
+  /// 客户端不自作主张选择 ws/wss，完全以服务端返回为准。
+  static String wsBase = 'ws://127.0.1.3:2346';
+
+  /// 客户端与服务端的时钟偏移（秒），默认 0
+  ///
+  /// 由 `user/domain` 接口返回的 `server_time` 计算得到：
+  ///   clockOffset = server_time - 本地时间戳
+  /// 签名请求生成时间戳时用"本地时间 + offset"，使签名时间与服务端一致，
+  /// 避免设备时钟不准（尤其国外/时钟漂移）导致"签名已过期"。
+  static int clockOffset = 0;
+
+  /// 当前用于签名的校准时间戳（本地时间 + 时钟偏移）
+  static int nowTimestamp() => (DateTime.now().millisecondsSinceEpoch ~/ 1000) + clockOffset;
+
+  /// 签名密钥（与后端 .env 的 API_SECRET 一致，用于请求签名 HMAC-SHA256）
+  /// 注意：不直接作为明文请求头传输，而是参与签名，防重放防伪造
+  static const String apiSecret = 'acgo_secret_2026_K9x!qZ';
+
+  /// 默认头像兜底地址（相对 API 域名）
+  static const String defaultAvatarPath = '/static/admin/img/default-avatar.png';
+
+  // ==================== 资源路径 ====================
+
+  /// 应用通用 logo（asset 相对路径）
+  static const String assetLogo = 'assets/images/app_logo.png';
+
+  /// 托盘图标（asset 相对路径，Windows 需 .ico）
+  static const String assetTrayIcon = 'assets/images/app_icon.ico';
+
+  // ==================== 目录 / 文件 ====================
+
+  /// 应用数据根目录：系统"文档"目录下的 appNameEn 子目录
+  /// 例如：C:\Users\xxx\Documents\acgo\
+  static String get dataDir => _documentsDir();
+
+  /// 配置目录（用户偏好：记住的账号密码、忽略的更新版本等）
+  /// 退出登录**保留**；仅在用户主动清理时删除。
+  static String get configDir => _ensureDir('$dataDir${_sep}config');
+
+  /// 应用数据目录（设备标识、登录态设备密钥等）
+  /// 退出登录清除登录态（device_key），但保留设备标识（device_id）。
+  static String get appDataDir => _ensureDir('$dataDir${_sep}data');
+
+  /// 日志目录（预留）
+  static String get logsDir => _ensureDir('$dataDir${_sep}logs');
+
+  static String get _sep => Platform.pathSeparator;
+
+  /// 确保目录存在并返回
+  static String _ensureDir(String path) {
+    if (!Directory(path).existsSync()) {
+      try {
+        Directory(path).createSync(recursive: true);
+      } catch (_) {}
+    }
+    return path;
+  }
+
+  /// 解析系统文档目录并拼接应用英文名子目录（不存在则创建）
+  static String _documentsDir() {
+    try {
+      final home = Platform.environment['USERPROFILE'] ??
+          Platform.environment['HOME'] ??
+          Directory.current.path;
+      // Windows 文档目录：用户主目录\Documents
+      var docs = '$home${Platform.pathSeparator}Documents';
+      if (!Directory(docs).existsSync()) {
+        // 文档目录可能被重定向到 OneDrive 等，兜底用用户主目录
+        docs = home;
+      }
+      final dir = '$docs${Platform.pathSeparator}$appNameEn';
+      if (!Directory(dir).existsSync()) {
+        try {
+          Directory(dir).createSync(recursive: true);
+        } catch (_) {}
+      }
+      return dir;
+    } catch (_) {
+      return Directory.current.path;
+    }
+  }
+
+  /// 完整接口 URL（拼接 apiBase + 相对路径）
+  static String api(String path) => '$apiBase$path';
+
+  /// 补全资源 URL（相对路径自动拼 apiBase，绝对地址原样返回）
+  static String resolveUrl(String? path) {
+    if (path == null || path.isEmpty) return '';
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    return '$apiBase$path';
+  }
+}
