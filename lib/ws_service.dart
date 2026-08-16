@@ -26,6 +26,7 @@ class WsService {
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
   Timer? _pingTimer;
+  Timer? _retryTimer;
   bool _running = false;
   bool _connecting = false;
 
@@ -38,8 +39,20 @@ class WsService {
   /// 首次断线时间；用于"重连总超时强制下线"
   DateTime? _disconnectSince;
 
+  /// 最近一次收到心跳响应（pong）的时间；用于探测"假连接"
+  DateTime _lastPongAt = DateTime.now();
+
   /// 重连总超时（行业标准：连续 60 秒连不上即视为离线，强制下线）
   static const Duration reconnectTimeout = Duration(seconds: 60);
+
+  /// 心跳发送间隔
+  static const Duration pingInterval = Duration(seconds: 25);
+
+  /// 建立连接超时（TCP + 握手超过该时长视为本次连接失败）
+  static const Duration connectTimeout = Duration(seconds: 8);
+
+  /// 心跳响应超时：超过该时长未收到 pong，判定连接已死，主动触发重连
+  static const Duration pongTimeout = Duration(seconds: 40);
 
   /// 强制退出回调（收到 force_logout 或重连超时）
   void Function(String reason)? onForceLogout;
@@ -85,6 +98,8 @@ class WsService {
     _running = false;
     _stopped = true;
     _retry = 1;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     _pingTimer?.cancel();
     _pingTimer = null;
     _sub?.cancel();
@@ -94,7 +109,7 @@ class WsService {
     onConnectionChange?.call(false);
   }
 
-  void _connect() {
+  Future<void> _connect() async {
     if (!_running || _connecting) return;
     _connecting = true;
 
@@ -106,39 +121,57 @@ class WsService {
       return;
     }
 
+    WebSocketChannel? channel;
     try {
-      final channel = WebSocketChannel.connect(Uri.parse(AppConfig.wsBase));
-      _channel = channel;
+      channel = WebSocketChannel.connect(Uri.parse(AppConfig.wsBase));
+      // 等待连接真正建立（TCP + 握手），避免"看似已连接实则未建立"的假在线
+      await channel.ready.timeout(connectTimeout);
+      if (!_running || _stopped) {
+        channel.sink.close();
+        _connecting = false;
+        return;
+      }
 
+      _channel = channel;
       _sub = channel.stream.listen(
         (data) => _onMessage(data),
         onDone: () => _onClosed(),
         onError: (_) => _onClosed(),
       );
 
-      // 连接建立后发送认证（WebSocketChannel.connect 返回后即可 send）
+      // 连接建立后发送认证
       channel.sink.add(jsonEncode({'type': 'auth', 'device_key': deviceKey}));
       _connecting = false;
       _disconnectSince = null; // 重连成功，清空断线计时
+      _lastPongAt = DateTime.now();
       onConnectionChange?.call(true);
 
       // 启动心跳
       _pingTimer?.cancel();
-      _pingTimer = Timer.periodic(const Duration(seconds: 25), (_) => _sendPing());
+      _pingTimer = Timer.periodic(pingInterval, (_) => _sendPing());
     } catch (_) {
       _connecting = false;
+      // 释放未建立成功的连接，避免资源泄漏
+      try {
+        channel?.sink.close();
+      } catch (_) {}
       _onClosed();
     }
   }
 
   void _sendPing() {
     final ch = _channel;
-    if (ch != null) {
-      try {
-        ch.sink.add(jsonEncode({'type': 'ping'}));
-      } catch (_) {
-        _onClosed();
-      }
+    if (ch == null) return;
+    // 心跳响应超时：超过 pongTimeout 未收到 pong，说明连接已"假死"
+    // （网络断开但 TCP 层未感知，onDone/onError 不会触发），主动断开交由重连逻辑处理
+    if (DateTime.now().difference(_lastPongAt) >= pongTimeout) {
+      _onClosed();
+      return;
+    }
+    try {
+      ch.sink.add(jsonEncode({'type': 'ping'}));
+    } catch (_) {
+      _onClosed();
     }
   }
 
@@ -199,8 +232,12 @@ class WsService {
         break;
 
       case 'pong':
+        // 心跳响应：刷新最近响应时间，用于连接健康检测
+        _lastPongAt = DateTime.now();
+        break;
+
       case 'error':
-        // 心跳响应/错误提示，暂不处理
+        // 错误提示，暂不处理
         break;
     }
   }
@@ -208,6 +245,8 @@ class WsService {
   void _forceStopAndNotify() {
     _running = false;
     _stopped = true;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     _pingTimer?.cancel();
     _sub?.cancel();
     _channel?.sink.close();
@@ -215,12 +254,16 @@ class WsService {
   }
 
   void _onClosed() {
+    // 取消正在等待的重连定时器，避免重复调度
+    _retryTimer?.cancel();
+    _retryTimer = null;
     if (_sub != null) {
       _sub?.cancel();
       _sub = null;
     }
     _pingTimer?.cancel();
     _pingTimer = null;
+    _channel?.sink.close();
     _channel = null;
     _connecting = false;
     onConnectionChange?.call(false);
@@ -231,15 +274,16 @@ class WsService {
     // 需要重连（非主动停止且运行中）
     if (_running && !_stopped) {
       final delay = Duration(seconds: _retry);
-      Timer(delay, () {
+      _retryTimer = Timer(delay, () {
+        _retryTimer = null;
         if (!_running || _stopped) return;
-        // 重连总超时：连续 reconnectTimeout 未连上 → 强制下线
+        // 重连总超时：连续 reconnectTimeout 未连上 → 提示并强制下线
         final elapsed =
             DateTime.now().difference(_disconnectSince ?? DateTime.now());
         if (elapsed >= reconnectTimeout) {
           _running = false;
           onConnectionChange?.call(false);
-          onForceLogout?.call('连接服务器超时，请重新登录');
+          onForceLogout?.call('网络连接不稳定，重连服务器失败，请检查网络后重新登录');
           return;
         }
         _retry = (_retry * 2 > 30) ? 30 : _retry * 2;

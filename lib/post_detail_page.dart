@@ -13,6 +13,7 @@ import 'app_config.dart';
 import 'app_theme.dart';
 import 'notify.dart';
 import 'sticker_panel.dart';
+import 'utils/net_image.dart';
 import 'utils/time_format.dart';
 
 /// 帖子详情页（广场动态内容页，参考小红书 PC 端）
@@ -57,7 +58,8 @@ class _PendingImage {
 }
 
 class _PostDetailPageState extends State<PostDetailPage> {
-  static const int _maxChildShow = 5; // 楼中楼最多直接展示的回复数
+  static const int _childDefaultShow = 1; // 楼中楼默认展示条数（小红书/抖音式折叠）
+  static const int _childExpandStep = 5; // 每次点"展开更多"增加的条数
   static const Duration _carouselInterval = Duration(seconds: 4); // 轮播间隔（小红书风格）
 
   // 帖子数据
@@ -90,8 +92,8 @@ class _PostDetailPageState extends State<PostDetailPage> {
   bool _postFavorited = false;
   int _postFavoriteCount = 0;
 
-  // 楼中楼展开状态（顶层评论 id 集合）
-  final Set<int> _expanded = {};
+  // 楼中楼展开进度（顶层评论 id → 当前已展示条数，默认 1 条，点"展开更多"每次 +5）
+  final Map<int, int> _childShowCount = {};
 
   // 轮播（无限循环：initialPage 取一个大的中间值，保证首尾都能向前/后翻）
   static const int _carouselBase = 100000;
@@ -543,6 +545,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
             height: 40,
             child: InkWell(
               onTap: () => Navigator.of(context).pop(),
+              mouseCursor: SystemMouseCursors.click, // 悬停显示手指
               hoverColor: bgHoverColor(b),
               child: Icon(Icons.arrow_back, size: 18, color: textMutedColor(b)),
             ),
@@ -627,6 +630,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
       );
     }
     return MouseRegion(
+      cursor: SystemMouseCursors.click, // 点击图片放大查看
       onEnter: (_) => _setCarouselPaused(true),
       onExit: (_) => _setCarouselPaused(false),
       child: Container(
@@ -653,24 +657,15 @@ class _PostDetailPageState extends State<PostDetailPage> {
                   // 点击图片放大查看
                   onTap: () => _showImagePreview(real),
                   child: Center(
-                    child: Image.network(
-                      AppConfig.resolveUrl(images[real]),
+                    child: NetImage(
+                      url: images[real],
                       fit: BoxFit.contain,
                       width: double.infinity,
                       height: double.infinity,
-                      loadingBuilder: (c, child, progress) {
-                        if (progress == null) return child;
-                        return const Center(
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white54),
-                          ),
-                        );
-                      },
-                      errorBuilder: (c, e, s) => Icon(Icons.broken_image_outlined,
-                          size: 48, color: Colors.white38),
+                      bgColor: Colors.transparent,
+                      spinnerColor: Colors.white54,
+                      errorIconColor: Colors.white38,
+                      errorIconSize: 48,
                     ),
                   ),
                 );
@@ -826,8 +821,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
         else
           for (final c in _comments) _CommentItem(
             comment: c,
-            expanded: _expanded.contains(c['id']),
-            maxChildShow: _maxChildShow,
+            childShowCount: _childShowCount[c['id']] ?? _childDefaultShow,
             currentUserId: widget.currentUserId,
             onReply: () => _startReply(
               (c['id'] as num?)?.toInt() ?? 0,
@@ -860,10 +854,11 @@ class _PostDetailPageState extends State<PostDetailPage> {
             onDeleteComment: (commentId) => _deleteComment(commentId),
             onReportComment: (commentId) =>
                 _reportContent(postId: widget.postId, commentId: commentId),
-            onToggleExpand: () {
+            onExpandMore: () {
               setState(() {
                 final id = c['id'];
-                if (!_expanded.remove(id)) _expanded.add(id);
+                _childShowCount[id] =
+                    (_childShowCount[id] ?? _childDefaultShow) + _childExpandStep;
               });
             },
           ),
@@ -975,6 +970,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
         Expanded(
           child: InkWell(
             onTap: _expandInput,
+            mouseCursor: SystemMouseCursors.click, // 悬停显示手指
             borderRadius: BorderRadius.circular(18),
             child: Container(
               height: 36,
@@ -1073,16 +1069,19 @@ class _PostDetailPageState extends State<PostDetailPage> {
                       Positioned(
                         top: 2,
                         right: 2,
-                        child: GestureDetector(
-                          onTap: () => _removePendingImage(i),
-                          child: Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.6),
-                              shape: BoxShape.circle,
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click, // 悬停显示手指
+                          child: GestureDetector(
+                            onTap: () => _removePendingImage(i),
+                            child: Container(
+                              padding: const EdgeInsets.all(2),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.6),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.close,
+                                  size: 12, color: Colors.white),
                             ),
-                            child: const Icon(Icons.close,
-                                size: 12, color: Colors.white),
                           ),
                         ),
                       ),
@@ -1276,9 +1275,12 @@ class _MoreButton extends StatelessWidget {
                 ),
               ),
             ],
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Icon(Icons.more_horiz, size: iconSize, color: iconColor),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click, // 悬停显示手指
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Icon(Icons.more_horiz, size: iconSize, color: iconColor),
+        ),
       ),
     );
   }
@@ -1288,11 +1290,12 @@ class _MoreButton extends StatelessWidget {
 ///
 /// [builder] 接收交互状态（isHover / isPressed），用于决定是否叠加
 /// "回复"文字变蓝等细粒度反馈；评论主体文字保持原色。
+/// 评论内容区：仅承载"鼠标悬停显示次色调胶囊背景"的视觉反馈动画，
+/// 本身不响应点击，发起回复必须点"回复"文字按钮（[_ReplyTextButton]）。
 class _ReplyArea extends StatefulWidget {
-  final VoidCallback onTap;
-  final Widget Function(bool hovered, bool pressed) builder;
+  final Widget Function(bool hovered) builder;
 
-  const _ReplyArea({required this.onTap, required this.builder});
+  const _ReplyArea({required this.builder});
 
   @override
   State<_ReplyArea> createState() => _ReplyAreaState();
@@ -1300,35 +1303,26 @@ class _ReplyArea extends StatefulWidget {
 
 class _ReplyAreaState extends State<_ReplyArea> {
   bool _hovered = false;
-  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
+    // 用"目标色 alpha=0"代替 Colors.transparent：
+    // Colors.transparent 是全透明黑（RGB=0），动画中间帧会叠出半透明黑 → hover 时先闪一帧很暗
+    final hoverBg = bgHoverColor(b);
     return MouseRegion(
-      cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() {
-        _hovered = false;
-        _pressed = false;
-      }),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
-        onTap: widget.onTap,
-        // 悬停/按下时显示次色调胶囊背景
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: (_hovered || _pressed) ? bgHoverColor(b) : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: widget.builder(_hovered, _pressed),
+      onExit: (_) => setState(() => _hovered = false),
+      // 悬停时胶囊背景平滑显现/消失（仅 alpha 渐变，RGB 恒定 → 不变暗）
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: _hovered ? hoverBg : hoverBg.withValues(alpha: 0),
+          borderRadius: BorderRadius.circular(8),
         ),
+        child: widget.builder(_hovered),
       ),
     );
   }
@@ -1380,9 +1374,10 @@ class _ReplyTextButtonState extends State<_ReplyTextButton> {
 
 /// 单条顶层评论（含楼中楼）
 class _CommentItem extends StatelessWidget {
+  static const int _childExpandStep = 5; // 每次点"展开更多"增加的条数（与 state 侧同步）
+
   final Map<String, dynamic> comment;
-  final bool expanded;
-  final int maxChildShow;
+  final int childShowCount;
   final int currentUserId;
   final VoidCallback onReply;
   final ValueChanged<Map<String, dynamic>> onReplyChild;
@@ -1390,12 +1385,11 @@ class _CommentItem extends StatelessWidget {
   final ValueChanged<Map<String, dynamic>> onLikeChild;
   final ValueChanged<int> onDeleteComment;
   final ValueChanged<int> onReportComment;
-  final VoidCallback onToggleExpand;
+  final VoidCallback onExpandMore;
 
   const _CommentItem({
     required this.comment,
-    required this.expanded,
-    required this.maxChildShow,
+    required this.childShowCount,
     required this.currentUserId,
     required this.onReply,
     required this.onReplyChild,
@@ -1403,7 +1397,7 @@ class _CommentItem extends StatelessWidget {
     required this.onLikeChild,
     required this.onDeleteComment,
     required this.onReportComment,
-    required this.onToggleExpand,
+    required this.onExpandMore,
   });
 
   @override
@@ -1424,7 +1418,8 @@ class _CommentItem extends StatelessWidget {
         ((comment['children'] as List<dynamic>?) ?? [])
             .map((e) => (e as Map<String, dynamic>?) ?? {})
             .toList();
-    final showCount = expanded ? children.length : maxChildShow;
+    final showCount =
+        childShowCount > children.length ? children.length : childShowCount;
     final hidden = children.length - showCount;
 
     return Padding(
@@ -1445,8 +1440,7 @@ class _CommentItem extends StatelessWidget {
               // 右侧：昵称(同行右"...") / 内容 / 时间 / 回复·点赞
               Expanded(
                 child: _ReplyArea(
-                  onTap: onReply,
-                  builder: (hovered, pressed) => Column(
+                  builder: (_) => Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // 昵称 + 右侧"..."菜单
@@ -1524,13 +1518,16 @@ class _CommentItem extends StatelessWidget {
                     _buildChild(context, b, children[i]),
                   if (hidden > 0)
                     InkWell(
-                      onTap: onToggleExpand,
+                      onTap: onExpandMore,
+                      mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                       borderRadius: BorderRadius.circular(4),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: Text(
-                          expanded ? '收起回复' : '展开全部 ${children.length} 条回复 ▾',
-                          style: TextStyle(fontSize: 12, color: kPrimary),
+                          hidden > _childExpandStep
+                              ? '展开 $_childExpandStep 条回复 ▾'
+                              : '展开全部 $hidden 条回复 ▾',
+                          style: TextStyle(fontSize: 14, color: kPrimary),
                         ),
                       ),
                     ),
@@ -1574,11 +1571,10 @@ class _CommentItem extends StatelessWidget {
             size: 22,
           ),
           const SizedBox(width: 6),
-          // 内容列（点击该层任意位置可回复，hover 显示次色调胶囊）
+          // 内容列（hover 显示次色调胶囊动画，发起回复只走"回复"文字按钮）
           Expanded(
             child: _ReplyArea(
-              onTap: () => onReplyChild(child),
-              builder: (hovered, pressed) => Column(
+              builder: (_) => Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // 行1：昵称 + 最右侧省略号（自己的=删除，别人的=举报）
@@ -1619,7 +1615,6 @@ class _CommentItem extends StatelessWidget {
                         if (showAt)
                           TextSpan(
                             text: '@$replyToName ',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                         ..._richSpans(b, content),
                       ],
@@ -1665,41 +1660,23 @@ class _CommentItem extends StatelessWidget {
       runSpacing: 6,
       children: [
         for (final url in images)
-          GestureDetector(
-            onTap: () => showDialog(
-              context: context,
-              barrierColor: Colors.black87,
-              builder: (_) =>
-                  _ImagePreviewDialog(images: images, initialIndex: images.indexOf(url)),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.network(
-                AppConfig.resolveUrl(url),
-                width: 96,
-                height: 96,
-                fit: BoxFit.cover,
-                loadingBuilder: (c, child, progress) {
-                  if (progress == null) return child;
-                  return Container(
-                    width: 96,
-                    height: 96,
-                    color: bgHoverColor(b),
-                    alignment: Alignment.center,
-                    child: const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  );
-                },
-                errorBuilder: (c, e, st) => Container(
+          MouseRegion(
+            cursor: SystemMouseCursors.click, // 点击图片放大查看
+            child: GestureDetector(
+              onTap: () => showDialog(
+                context: context,
+                barrierColor: Colors.black87,
+                builder: (_) =>
+                    _ImagePreviewDialog(images: images, initialIndex: images.indexOf(url)),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: NetImage(
+                  url: url,
                   width: 96,
                   height: 96,
-                  color: bgHoverColor(b),
-                  alignment: Alignment.center,
-                  child: Icon(Icons.broken_image_outlined,
-                      size: 24, color: textFaintColor(b)),
+                  fit: BoxFit.cover,
+                  loadingSize: 16,
                 ),
               ),
             ),
@@ -1741,6 +1718,7 @@ class _CommentLikeButton extends StatelessWidget {
     final b = Theme.of(context).brightness;
     return InkWell(
       onTap: onTap,
+      mouseCursor: SystemMouseCursors.click, // 悬停显示手指
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1789,6 +1767,7 @@ class _PostActionButton extends StatelessWidget {
       message: tooltip,
       child: InkWell(
         onTap: onTap,
+        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         borderRadius: BorderRadius.circular(8),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -1993,6 +1972,7 @@ class _WinButton extends StatelessWidget {
       height: 40,
       child: InkWell(
         onTap: onTap,
+        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         hoverColor: isClose ? kDanger.withValues(alpha: 0.15) : bgHoverColor(b),
         child: Icon(icon, size: 16, color: textMutedColor(b)),
       ),
@@ -2031,21 +2011,22 @@ class _ImagePreviewDialogState extends State<_ImagePreviewDialog> {
             controller: _pageCtrl,
             onPageChanged: (i) => setState(() => _current = i),
             itemCount: widget.images.length,
-            itemBuilder: (context, i) => GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => Navigator.of(context).pop(), // 点击空白关闭
-              child: Center(
-                child: InteractiveViewer(
-                  maxScale: 4,
-                  child: Image.network(
-                    AppConfig.resolveUrl(widget.images[i]),
-                    fit: BoxFit.contain,
-                    loadingBuilder: (c, child, progress) {
-                      if (progress == null) return child;
-                      return const CircularProgressIndicator(color: Colors.white54);
-                    },
-                    errorBuilder: (c, e, s) => const Icon(
-                        Icons.broken_image_outlined, size: 48, color: Colors.white38),
+            itemBuilder: (context, i) => MouseRegion(
+              cursor: SystemMouseCursors.click, // 点击空白关闭
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => Navigator.of(context).pop(), // 点击空白关闭
+                child: Center(
+                  child: InteractiveViewer(
+                    maxScale: 4,
+                    child: NetImage(
+                      url: widget.images[i],
+                      fit: BoxFit.contain,
+                      bgColor: Colors.transparent,
+                      spinnerColor: Colors.white54,
+                      errorIconColor: Colors.white38,
+                      errorIconSize: 48,
+                    ),
                   ),
                 ),
               ),
@@ -2168,6 +2149,7 @@ class _NavArrow extends StatelessWidget {
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
+        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(8),

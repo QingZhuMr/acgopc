@@ -32,6 +32,5 @@ flutter:
 
   assets:
     - assets/images/app_logo.png
-    - assets/images/desktop_icon.png
     - assets/images/app_icon.ico
     - assets/images/logo_white.png

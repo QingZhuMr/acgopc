@@ -42,6 +42,7 @@ import 'secure_storage.dart';
 import 'splash_page.dart';
 import 'theme_controller.dart';
 import 'updater.dart';
+import 'utils/net_image.dart';
 import 'ws_service.dart';
 
 void main() async {
@@ -521,6 +522,7 @@ class _HomePageState extends State<HomePage> {
                             message: '广场',
                             child: InkWell(
                               onTap: () => setState(() => _currentIndex = 0),
+                              mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                               child: Icon(
                                 Icons.space_dashboard_rounded,
                                 size: 22,
@@ -546,12 +548,15 @@ class _HomePageState extends State<HomePage> {
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Tooltip(
                           message: '个人中心',
-                          child: GestureDetector(
-                            onTap: () => setState(() => _currentIndex = 1),
-                            child: _UserAvatar(
-                              avatarUrl: _userAvatar,
-                              nickname: _userNickname,
-                              size: 36,
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.click, // 悬停显示手指
+                            child: GestureDetector(
+                              onTap: () => setState(() => _currentIndex = 1),
+                              child: _UserAvatar(
+                                avatarUrl: _userAvatar,
+                                nickname: _userNickname,
+                                size: 36,
+                              ),
                             ),
                           ),
                         ),
@@ -686,6 +691,7 @@ class _WinButton extends StatelessWidget {
       height: 60,
       child: InkWell(
         onTap: onTap,
+        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         hoverColor: isClose ? const Color(0xFFE81123) : bgHoverColor(b),
         child: Icon(
           icon,
@@ -1185,6 +1191,7 @@ class _PostCardState extends State<_PostCard> {
           color: Colors.transparent,
           child: InkWell(
             onTap: widget.onTap,
+            mouseCursor: SystemMouseCursors.click, // 悬停显示手指
             onHighlightChanged: (v) => setState(() => _pressed = v),
             borderRadius: BorderRadius.circular(12),
             child: AnimatedContainer(
@@ -1283,7 +1290,7 @@ class _PostCardState extends State<_PostCard> {
   }
 }
 
-/// 封面图（网络图 + 加载 / 错误兜底）
+/// 封面图（网络图 + 统一加载 / 错误兜底）
 class _CoverImage extends StatelessWidget {
   final String url;
   final double height;
@@ -1292,35 +1299,12 @@ class _CoverImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final b = Theme.of(context).brightness;
-    final placeholder = Container(
-      height: height,
-      color: bgHoverColor(b),
-      child: const Center(
-        child: SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      ),
-    );
-    return Image.network(
-      AppConfig.resolveUrl(url),
+    return NetImage(
+      url: url,
       width: double.infinity,
       height: height,
       fit: BoxFit.cover,
       cacheWidth: 480, // 限制解码尺寸，降低内存与解码开销，提升滚动流畅度
-      filterQuality: FilterQuality.medium,
-      loadingBuilder: (context, child, progress) {
-        if (progress == null) return child;
-        return placeholder;
-      },
-      errorBuilder: (context, error, stackTrace) => Container(
-        height: height,
-        color: bgHoverColor(b),
-        child: Icon(Icons.broken_image_outlined,
-            color: textFaintColor(b), size: 24),
-      ),
     );
   }
 }
@@ -1740,6 +1724,7 @@ class _ProfileViewState extends State<_ProfileView> {
                               // 编辑入口
                               InkWell(
                                 onTap: _openEditDialog,
+                                mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                                 borderRadius: BorderRadius.circular(6),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -1883,6 +1868,7 @@ class _ProfileViewState extends State<_ProfileView> {
                             bottom: -4,
                             child: InkWell(
                               onTap: () => _pickAndCropAvatar(setDialogState),
+                              mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                               borderRadius: BorderRadius.circular(18),
                               child: Container(
                                 width: 36,
@@ -2294,6 +2280,7 @@ class _AvatarCropDialogState extends State<_AvatarCropDialog> {
                   const Spacer(),
                   InkWell(
                     onTap: () => Navigator.pop(context),
+                    mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                     borderRadius: BorderRadius.circular(6),
                     child: Padding(
                       padding: const EdgeInsets.all(6),
@@ -2629,6 +2616,7 @@ class _ThemeOption extends StatelessWidget {
     final selected = value == current;
     return InkWell(
       onTap: () => onTap(value),
+      mouseCursor: SystemMouseCursors.click, // 悬停显示手指
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
         child: Row(
@@ -2744,6 +2732,7 @@ class _NotificationBell extends StatelessWidget {
           shape: const StadiumBorder(),
           child: InkWell(
             customBorder: const StadiumBorder(),
+            mouseCursor: SystemMouseCursors.click, // 悬停显示手指
             onTap: onTap,
             hoverColor: bgHoverColor(b),
             child: Stack(

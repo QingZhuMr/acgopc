@@ -196,6 +196,7 @@ if (ok == true) { /* 确认后的逻辑 */ }
 | `lib/app_service.dart` | 单实例锁 + 系统托盘 + 关闭驻留后台 |
 | `lib/sticker_panel.dart` | 表情面板（`EmojiPanel` 供帖子评论/发布页；`StickerPanel` 含表情包供聊天） |
 | `lib/utils/time_format.dart` | 时间/日期格式化（相对时间 + 归属地占位） |
+| `lib/utils/net_image.dart` | 通用网络图片组件 `NetImage`（统一加载中/加载失败占位，头像除外） |
 
 ---
 
@@ -231,12 +232,30 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 
 ---
 
+## 9. 图片加载规范
+
+除头像外，所有网络图片统一使用 `lib/utils/net_image.dart` 的 **`NetImage`** 组件，保证"加载中"和"加载不出来"有统一的默认状态，不出现空白：
+
+- **加载中**：底色占位 + 转圈（默认 18px，`strokeWidth: 2`，主题主色）
+- **加载失败**：底色占位 + `broken_image` 图标（默认 24px，主题弱化色）
+- 组件内部统一 `AppConfig.resolveUrl`，外部直接传原始路径
+
+**适用范围**：首页封面图、详情页轮播图、评论图片、全屏图片预览、表情面板与内联表情图。
+
+**头像不使用 `NetImage`**：头像有专属的圆形首字兜底（`_UserAvatar` / `_AvatarBox` / `_NotifyAvatar` / `_Avatar`），保持各自样式。
+
+**可覆盖参数**：`fit` / `cacheWidth` / `bgColor` / `loadingSize` / `spinnerColor` / `errorIcon` / `errorIconSize` / `errorIconColor`（如深色大图预览用白字图标、表情小图用更小图标）。
+
+---
+
 ## 9. 内容区细节规范（广场 / 详情页）
 
 - **时间显示**：用 `formatRelativeTime`（`lib/utils/time_format.dart`），本地相对时间：
   - <1 分钟「刚刚」；<1 小时「X分钟前」；今天「X小时前」；昨天「昨天 HH:mm」
   - 前天起 <7 天「X天前」；同年 ≥7 天「M月d日」；跨年「YYYY-MM-DD」
   - 时间右侧拼接归属地：`formatTimeWithLocation`（IP 转省份未接入前显示「未知」）
+- **楼中楼折叠**（小红书/抖音式）：每个顶层评论的楼中楼**默认只显示 1 条**；超出部分显示「展开 5 条回复 ▾」，点击每次 +5 条（剩余 ≤5 条时显示「展开全部 N 条回复 ▾」），全部展开后按钮消失。实现：`_PostDetailPageState._childShowCount`（评论 id → 已展示条数）+ `_CommentItem.childShowCount/onExpandMore`
+- **评论/楼中楼 hover 胶囊**（`_ReplyArea`）：评论内容区（顶层+楼中楼）鼠标悬停时次色调胶囊背景 180ms 平滑渐显/渐隐（仅 alpha 渐变、RGB 恒定不变暗）。**内容区本身不响应点击**——发起回复只能点「回复」文字按钮（`_ReplyTextButton`，hover 变蓝加粗），杜绝误触整区误发回复；评论点赞仍走独立的 `_CommentLikeButton`
 - **纯文本帖子假封面**（`_TextCover`）：取正文前 30 字 + 中文双引号 `"…"`，溢出用 `...`，字号 18-20
 
 > **新增页面/组件时**：颜色一律用 `app_theme.dart` 的函数/常量 → 文字用对应层级（text/textBody/textMuted...）→ 卡片 `elevation:0` + 8px 圆角 → 图标用 Material Icons → 主题用 `Theme.of(context).brightness` 分流 → **禁硬编码颜色** → 可滚动区域用 silky_scroll → 时间用 `formatRelativeTime`。

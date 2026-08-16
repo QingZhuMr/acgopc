@@ -16,16 +16,16 @@ abstract final class AppConfig {
 
   /// 后端 API 接口地址（对接 api 应用）
   /// 生产环境改为 https://你的域名
-  static const String apiBase = 'http://127.0.1.3';
+  static const String apiBase = 'https://api.yeahbear.cn';
 
   /// WebSocket 实时推送地址（完整 URL，含 scheme 与可选 path）
   ///
   /// 由服务端 `user/domain` 接口返回的 `ws_url` 决定，客户端启动时写入：
-  ///  - 开发环境：`ws://127.0.1.3:2346`（直连 Workerman）
+  ///  - 开发环境：`ws://127.0.1.3:2346`（直连 Swoole）
   ///  - 生产环境：`wss://api域名/ws`（经 Nginx 反向代理）
   ///
   /// 客户端不自作主张选择 ws/wss，完全以服务端返回为准。
-  static String wsBase = 'ws://127.0.1.3:2346';
+  static String wsBase = 'wss://api.yeahbear.cn/ws';
 
   /// 客户端与服务端的时钟偏移（秒），默认 0
   ///

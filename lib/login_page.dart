@@ -502,6 +502,7 @@ class _LoginWinButton extends StatelessWidget {
       height: 40,
       child: InkWell(
         onTap: onTap,
+        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         hoverColor: isClose ? const Color(0xFFE81123) : bgHoverColor(b),
         child: Icon(
           icon,

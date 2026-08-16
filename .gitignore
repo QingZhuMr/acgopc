@@ -50,3 +50,6 @@ app.*.map.json
 # Local run logs
 run_log.txt
 run_err.txt
+
+# 打包临时残留
+tools/

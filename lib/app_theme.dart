@@ -105,6 +105,10 @@ Color textMutedColor(Brightness b) =>
 Color textFaintColor(Brightness b) =>
     b == Brightness.dark ? DarkColors.textFaint : LightColors.textFaint;
 
+/// 全局可点击组件统一鼠标光标（Windows 桌面端 adaptiveClickable 默认是箭头）
+const WidgetStateProperty<MouseCursor?> _clickCursor =
+    WidgetStatePropertyAll(SystemMouseCursors.click);
+
 /// 构建明亮主题
 ThemeData buildLightTheme() {
   return ThemeData(
@@ -115,6 +119,19 @@ ThemeData buildLightTheme() {
       primary: kPrimary,
       surface: LightColors.bg,
     ),
+    // 全局统一：所有 Material 可点击组件悬停显示手型
+    textButtonTheme: TextButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    iconButtonTheme: IconButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    filledButtonTheme: FilledButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    listTileTheme: ListTileThemeData(mouseCursor: _clickCursor),
+    popupMenuTheme: PopupMenuThemeData(mouseCursor: _clickCursor),
     fontFamily: 'Segoe UI Variable',
     fontFamilyFallback: const [
       'Segoe UI',
@@ -162,6 +179,19 @@ ThemeData buildDarkTheme() {
       primary: kPrimary,
       surface: DarkColors.bg,
     ),
+    // 全局统一：所有 Material 可点击组件悬停显示手型
+    textButtonTheme: TextButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    iconButtonTheme: IconButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    filledButtonTheme: FilledButtonThemeData(
+        style: ButtonStyle(mouseCursor: _clickCursor)),
+    listTileTheme: ListTileThemeData(mouseCursor: _clickCursor),
+    popupMenuTheme: PopupMenuThemeData(mouseCursor: _clickCursor),
     fontFamily: 'Segoe UI Variable',
     fontFamilyFallback: const [
       'Segoe UI',

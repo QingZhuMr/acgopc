@@ -323,6 +323,7 @@ class _NotifyCardState extends State<_NotifyCard> {
       color: Colors.transparent,
       child: InkWell(
         onTap: item.onTap,
+        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         borderRadius: BorderRadius.circular(10),
         child: Container(
           width: 380,
@@ -377,6 +378,7 @@ class _NotifyCardState extends State<_NotifyCard> {
               const SizedBox(width: 8),
               InkWell(
                 onTap: _handleDismiss,
+                mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                 borderRadius: BorderRadius.circular(12),
                 child: Padding(
                   padding: const EdgeInsets.all(4),

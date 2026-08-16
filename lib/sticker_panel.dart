@@ -6,11 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:silky_scroll/silky_scroll.dart';
 
 import 'api_client.dart';
-import 'app_config.dart';
 import 'app_theme.dart';
 import 'emoji_data.dart';
 import 'image_compressor.dart';
 import 'notify.dart';
+import 'utils/net_image.dart';
 
 /// 云端表情包条目
 class StickerItem {
@@ -214,6 +214,7 @@ class _StickerPanelState extends State<StickerPanel> {
     final selected = _tab == tab;
     return InkWell(
       onTap: () => setState(() => _tab = tab),
+      mouseCursor: SystemMouseCursors.click, // 悬停显示手指
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -256,6 +257,7 @@ class _StickerPanelState extends State<StickerPanel> {
               for (final e in EmojiData.groups[gi])
                 InkWell(
                   onTap: () => widget.onEmoji(e),
+                  mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                   borderRadius: BorderRadius.circular(6),
                   child: Center(
                     child: Text(e, style: const TextStyle(fontSize: 18)),
@@ -312,6 +314,7 @@ class _StickerPanelState extends State<StickerPanel> {
                         message: '上传表情包',
                         child: InkWell(
                           onTap: _upload,
+                          mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                           borderRadius: BorderRadius.circular(8),
                           child: Container(
                             decoration: BoxDecoration(
@@ -336,6 +339,7 @@ class _StickerPanelState extends State<StickerPanel> {
                   message: _deleteMode ? '退出删除' : '删除表情包',
                   child: InkWell(
                     onTap: () => setState(() => _deleteMode = !_deleteMode),
+                    mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                     borderRadius: BorderRadius.circular(8),
                     child: Container(
                       decoration: BoxDecoration(
@@ -361,17 +365,13 @@ class _StickerPanelState extends State<StickerPanel> {
                 );
               }
               final s = _stickers[i - 2];
-              final image = Image.network(
-                AppConfig.resolveUrl(s.url),
+              final image = NetImage(
+                url: s.url,
                 fit: BoxFit.contain,
                 width: 56,
                 height: 56,
-                errorBuilder: (c, e, st) => Container(
-                  color: b == Brightness.dark ? DarkColors.bg : LightColors.bg,
-                  alignment: Alignment.center,
-                  child: Icon(Icons.broken_image_outlined,
-                      size: 18, color: textFaintColor(b)),
-                ),
+                bgColor: b == Brightness.dark ? DarkColors.bg : LightColors.bg,
+                errorIconSize: 18,
               );
               // 删除模式：点击删除（仅自己上传的），否则点击插入
               if (_deleteMode) {
@@ -382,6 +382,7 @@ class _StickerPanelState extends State<StickerPanel> {
                     onTap: () {
                       if (canDelete) _deleteSticker(s);
                     },
+                    mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                     borderRadius: BorderRadius.circular(8),
                     child: Stack(
                       fit: StackFit.passthrough,
@@ -409,6 +410,7 @@ class _StickerPanelState extends State<StickerPanel> {
               }
               return InkWell(
                 onTap: () => widget.onSticker(s),
+                mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                 borderRadius: BorderRadius.circular(8),
                 child: image,
               );
@@ -526,6 +528,7 @@ class _EmojiPanelState extends State<EmojiPanel> {
               for (final e in EmojiData.groups[gi])
                 InkWell(
                   onTap: () => widget.onEmoji(e),
+                  mouseCursor: SystemMouseCursors.click, // 悬停显示手指
                   borderRadius: BorderRadius.circular(6),
                   child: Center(
                     child: Text(e, style: const TextStyle(fontSize: 18)),

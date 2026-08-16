@@ -355,6 +355,7 @@ class _NotificationPageState extends State<NotificationPage> {
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
+          mouseCursor: SystemMouseCursors.click, // 悬停显示手指
           onTap: () => _onTapNotify(n),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
@@ -552,6 +553,7 @@ class _WinButton extends StatelessWidget {
       height: 60,
       child: InkWell(
         onTap: onTap,
+        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         hoverColor: isClose ? const Color(0xFFE81123) : bgHoverColor(b),
         child: Icon(
           icon,

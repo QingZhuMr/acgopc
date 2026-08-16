@@ -291,6 +291,7 @@ class _PublishPostPageState extends State<PublishPostPage> {
             height: 40,
             child: InkWell(
               onTap: _handleBack,
+              mouseCursor: SystemMouseCursors.click, // 悬停显示手指
               hoverColor: bgHoverColor(b),
               child: Icon(Icons.arrow_back,
                   size: 18, color: textMutedColor(b)),
@@ -439,6 +440,7 @@ class _PublishPostPageState extends State<PublishPostPage> {
   Widget _addButton(Brightness b) {
     return InkWell(
       onTap: _pickImages,
+      mouseCursor: SystemMouseCursors.click, // 悬停显示手指
       borderRadius: BorderRadius.circular(10),
       child: Container(
         width: _thumbSize,
@@ -482,16 +484,19 @@ class _PublishPostPageState extends State<PublishPostPage> {
           Positioned(
             top: 4,
             right: 4,
-            child: GestureDetector(
-              onTap: () => _removeImage(index),
-              child: Container(
-                width: 18,
-                height: 18,
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.55),
-                  shape: BoxShape.circle,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click, // 悬停显示手指
+              child: GestureDetector(
+                onTap: () => _removeImage(index),
+                child: Container(
+                  width: 18,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.close, size: 12, color: Colors.white),
                 ),
-                child: const Icon(Icons.close, size: 12, color: Colors.white),
               ),
             ),
           ),
@@ -644,6 +649,7 @@ class _WinButton extends StatelessWidget {
       height: 40,
       child: InkWell(
         onTap: onTap,
+        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         hoverColor: isClose ? kDanger.withValues(alpha: 0.15) : bgHoverColor(b),
         child: Icon(icon, size: 16, color: textMutedColor(b)),
       ),

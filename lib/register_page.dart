@@ -323,38 +323,43 @@ class _RegisterPageState extends State<RegisterPage> {
                                   const SizedBox(width: 10),
                                   // 验证码图片：按原始比例(120:40=3:1)自适应，高度=输入框高度
                                   // 宽度随高度自动适应（不预设宽度），图片无形变
-                                  GestureDetector(
-                                    onTap: _refreshCaptcha,
-                                    child: AspectRatio(
-                                      aspectRatio: 3,
-                                      child: Container(
-                                        decoration: BoxDecoration(
-                                          color: fieldBg,
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                          image: _captchaImage != null
-                                              ? DecorationImage(
-                                                  image: MemoryImage(base64Decode(
-                                                      _captchaImage!.replaceFirst(
-                                                          RegExp(
-                                                              r'^data:image/\w+;base64,'),
-                                                          ''))),
-                                                  fit: BoxFit.fill,
-                                                )
-                                              : null,
+                                  MouseRegion(
+                                    cursor: SystemMouseCursors.click, // 点击刷新验证码
+                                    child: GestureDetector(
+                                      onTap: _refreshCaptcha,
+                                      child: AspectRatio(
+                                        aspectRatio: 3,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: fieldBg,
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                            image: _captchaImage != null
+                                                ? DecorationImage(
+                                                    image: MemoryImage(
+                                                        base64Decode(
+                                                            _captchaImage!
+                                                                .replaceFirst(
+                                                                    RegExp(
+                                                                        r'^data:image/\w+;base64,'),
+                                                                    ''))),
+                                                    fit: BoxFit.fill,
+                                                  )
+                                                : null,
+                                          ),
+                                          clipBehavior: Clip.hardEdge,
+                                          alignment: Alignment.center,
+                                          // 未加载时显示 loading
+                                          child: _captchaImage != null
+                                              ? null
+                                              : const SizedBox(
+                                                  width: 16,
+                                                  height: 16,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                          strokeWidth: 2),
+                                                ),
                                         ),
-                                        clipBehavior: Clip.hardEdge,
-                                        alignment: Alignment.center,
-                                        // 未加载时显示 loading
-                                        child: _captchaImage != null
-                                            ? null
-                                            : const SizedBox(
-                                                width: 16,
-                                                height: 16,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                        strokeWidth: 2),
-                                              ),
                                       ),
                                     ),
                                   ),
@@ -473,6 +478,7 @@ class _RegisterTitleBar extends StatelessWidget {
             height: 40,
             child: InkWell(
               onTap: () => Navigator.of(context).maybePop(),
+              mouseCursor: SystemMouseCursors.click, // 悬停显示手指
               hoverColor: bgHoverColor(brightness),
               child: Icon(Icons.arrow_back,
                   size: 18, color: textMutedColor(brightness)),
@@ -531,6 +537,7 @@ class _RegisterWinButton extends StatelessWidget {
       height: 40,
       child: InkWell(
         onTap: onTap,
+        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         hoverColor: isClose ? kDanger.withValues(alpha: 0.15) : bgHoverColor(b),
         child: Icon(icon, size: 16, color: textMutedColor(b)),
       ),

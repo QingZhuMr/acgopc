@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'app_config.dart';
 import 'sticker_panel.dart';
+import 'utils/net_image.dart';
 
 /// 支持输入框内联显示表情包图片的 TextEditingController。
 ///
@@ -83,13 +83,15 @@ class StickerInputController extends TextEditingController {
       if (s != null && s.url.isNotEmpty) {
         spans.add(WidgetSpan(
           alignment: PlaceholderAlignment.middle,
-          child: Image.network(
-            AppConfig.resolveUrl(s.url),
+          child: NetImage(
+            url: s.url,
             width: inlineSize,
             height: inlineSize,
             fit: BoxFit.contain,
-            errorBuilder: (c, e, st) => Icon(Icons.image_not_supported_outlined,
-                size: inlineSize, color: Colors.grey),
+            bgColor: Colors.transparent,
+            errorIcon: Icons.image_not_supported_outlined,
+            errorIconSize: inlineSize,
+            errorIconColor: Colors.grey,
           ),
         ));
       } else {
