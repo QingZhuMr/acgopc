@@ -51,17 +51,31 @@ class AppService {
   /// 检测是否已有本程序实例在运行。
   ///
   /// 采用双保险：
-  ///  - 进程检测（主）：用 PowerShell Get-Process 统计 Yeahbear 进程数，>1 则已有实例
+  ///  - 进程检测（主）：Windows 用 PowerShell Get-Process 统计 Yeahbear 进程数；
+  ///    macOS/Linux 用 pgrep 精确匹配进程名，>1 则已有实例
   ///  - 文件锁（兜底）：lockSync 被占用则视为已有实例
   Future<bool> _hasExistingInstance() async {
     // 第一层：进程检测（可靠）
     try {
-      final res = await Process.run('powershell', [
-        '-NoProfile',
-        '-Command',
-        '(Get-Process -Name Yeahbear -ErrorAction SilentlyContinue).Count',
-      ]);
-      final count = int.tryParse(res.stdout.toString().trim()) ?? 0;
+      int count = 0;
+      if (Platform.isWindows) {
+        final res = await Process.run('powershell', [
+          '-NoProfile',
+          '-Command',
+          '(Get-Process -Name Yeahbear -ErrorAction SilentlyContinue).Count',
+        ]);
+        count = int.tryParse(res.stdout.toString().trim()) ?? 0;
+      } else {
+        // macOS / Linux：pgrep -x 精确匹配进程名
+        // 注意：macOS 默认产物名是 Runner，改名后需同步此处的进程名
+        final res = await Process.run('pgrep', ['-x', AppConfig.appNameEn]);
+        count = res.stdout
+            .toString()
+            .trim()
+            .split(RegExp(r'\s+'))
+            .where((e) => e.isNotEmpty)
+            .length;
+      }
       if (count > 1) {
         return true; // 已有其它实例在运行
       }
@@ -142,12 +156,15 @@ class AppService {
     trayManager.addListener(_trayListener);
   }
 
-  /// 从 asset 提取托盘图标到临时目录（Windows 需 .ico）
+  /// 从 asset 提取托盘图标到临时目录。
+  /// Windows 托盘需 `.ico`；macOS 菜单栏需 `.png` 模板图（用应用 logo）。
   Future<File?> _extractTrayIcon() async {
     try {
-      final data = await rootBundle.load(AppConfig.assetTrayIcon);
+      final isMac = Platform.isMacOS;
+      final asset = isMac ? AppConfig.assetLogo : AppConfig.assetTrayIcon;
+      final data = await rootBundle.load(asset);
       final tmp = Directory.systemTemp;
-      final f = File('${tmp.path}${Platform.pathSeparator}acgo_tray.ico');
+      final f = File('${tmp.path}${Platform.pathSeparator}acgo_tray.${isMac ? 'png' : 'ico'}');
       await f.writeAsBytes(data.buffer.asUint8List(), flush: true);
       return f;
     } catch (_) {

@@ -178,10 +178,12 @@ if (ok == true) { /* 确认后的逻辑 */ }
 
 - **窗口**：`window_manager` 管理，`TitleBarStyle.hidden` 隐藏系统标题栏，Flutter 自绘顶栏承担拖拽 + 窗口按钮
 - **安全最小尺寸**：全程序统一 `Size(900, 640)`（`WindowOptions.minimumSize` + `setMinimumSize` 双重保障）
-- **托盘驻留**：`tray_manager` + 托盘图标 `assets/images/app_icon.ico`（Windows 需 .ico）。点关闭按钮 → `_WindowCloseListener.onWindowClose` 拦截为 `windowManager.hide()`（隐藏到托盘而非退出）；托盘左键显示窗口、右键弹菜单（显示主窗口 / 退出）
-- **单实例**：`AppService` 用 `File.create(exclusive: true)` 锁文件（`~/acgo_pc/single_instance.lock`）实现。重复启动则检测失败直接退出
+- **托盘驻留**：`tray_manager` + 托盘图标。点关闭按钮 → `_WindowCloseListener.onWindowClose` 拦截为 `windowManager.hide()`（隐藏到托盘而非退出）；托盘左键显示窗口、右键弹菜单（显示主窗口 / 退出）
+- **单实例**：`AppService` 双层检测 —— 进程检测（Windows 用 PowerShell `Get-Process`，macOS/Linux 用 `pgrep -x`）+ 文件锁兜底（`AppConfig.dataDir/single_instance.lock`）。重复启动则请求唤起已有实例窗口并退出
 
-**托盘图标**：Windows 用 `.ico`，`setIcon` 需要文件路径（asset 需 `rootBundle.load` 后写入临时目录再传 `File`）。
+**托盘图标**：Windows 用 `.ico`（`assets/images/app_icon.ico`），macOS 用 `.png` 模板图（`assets/images/app_logo.png`），由 `AppService._extractTrayIcon` 按 `Platform.isMacOS` 分支选择。`setIcon` 需要文件路径（asset 需 `rootBundle.load` 后写入临时目录再传 `File`）。
+
+> **跨平台说明**：项目已做 macOS/Linux 基本兼容（单实例、托盘图标、更新安装方式按平台分支）。当前仅含 `windows/` 平台目录，在 Mac 上需先 `flutter create --platforms=macos .` 生成，并给 entitlements 加 `com.apple.security.network.client`。
 
 ---
 

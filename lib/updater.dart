@@ -228,7 +228,7 @@ class Updater {
     }
   }
 
-  /// 重启并安装更新（Windows：启动安装 exe）
+  /// 重启并安装更新（Windows：直接启动安装 exe；macOS：open 打开安装包）
   Future<void> _restartAndInstall() async {
     try {
       final tmp = Directory.systemTemp;
@@ -239,9 +239,13 @@ class Updater {
       ];
       for (final p in candidates) {
         if (File(p).existsSync()) {
-          await Process.start(p, [], mode: ProcessStartMode.detached);
+          if (Platform.isMacOS) {
+            // macOS：通过 open 打开 pkg 安装包
+            await Process.start('open', [p], mode: ProcessStartMode.detached);
+          } else {
+            await Process.start(p, [], mode: ProcessStartMode.detached);
+          }
           exit(0);
-          return;
         }
       }
     } catch (_) {}
