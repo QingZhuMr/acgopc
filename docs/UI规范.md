@@ -261,3 +261,16 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - **纯文本帖子假封面**（`_TextCover`）：取正文前 30 字 + 中文双引号 `"…"`，溢出用 `...`，字号 18-20
 
 > **新增页面/组件时**：颜色一律用 `app_theme.dart` 的函数/常量 → 文字用对应层级（text/textBody/textMuted...）→ 卡片 `elevation:0` + 8px 圆角 → 图标用 Material Icons → 主题用 `Theme.of(context).brightness` 分流 → **禁硬编码颜色** → 可滚动区域用 silky_scroll → 时间用 `formatRelativeTime`。
+
+---
+
+## 10. 个人中心规范
+
+- **右上角省略号**（`Icons.more_horiz`，`PopupMenuButton`）：点击弹出更多操作菜单 —— 「更改密码」「退出账户」。两项均从此菜单进入，**页面主体不再单独放账户安全卡**
+- **我的收藏**：位于用户信息卡下方，小红书/抖音风格双列瀑布流：
+  - 数据源：`GET /api/post/favorites`（分页，page_size=12），触底自动加载更多
+  - 布局：复用首页瀑布流组件 `_MasonryGrid`/`_PostCard`，列数按窗口宽度 2/3/4 列
+  - 封面高度：`_favCoverHeight`（150px 基准 + id 微调），贴合小红书 3:4 视觉
+  - 状态：加载中骨架屏（`_SkeletonGrid`）、失败重试（`_FavRetry`）、空态（`_EmptyFavorites`，图标 + 引导文案）
+  - 交互：点击卡片进帖子详情；从详情返回后自动刷新收藏列表（可能已取消收藏）
+- **导航**：个人中心（`_currentIndex=1`）仍在左侧导航栏，页面标题「个人中心」

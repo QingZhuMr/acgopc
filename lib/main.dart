@@ -1620,11 +1620,21 @@ class _ProfileViewState extends State<_ProfileView> {
     return raw.toString();
   }
 
+  // ===== 我的收藏 =====
+  final List<Map<String, dynamic>> _favorites = [];
+  int _favPage = 1;
+  bool _favLoading = true;
+  bool _favLoadingMore = false;
+  bool _favAllLoaded = false;
+  bool _favLoadFailed = false;
+
   @override
   void initState() {
     super.initState();
     // 监听钱包余额推送（充值到账后 WS 实时刷新熊爪余额）
     WsService.instance.onWallet = _onWalletPushed;
+    // 加载我的收藏列表
+    _loadFavorites();
   }
 
   @override
@@ -1648,19 +1658,65 @@ class _ProfileViewState extends State<_ProfileView> {
     final b = Theme.of(context).brightness;
     return _PageScaffold(
       title: '个人中心',
+      actions: [
+        // 右上角省略号：更多操作（更改密码 / 退出账户）
+        PopupMenuButton<String>(
+          tooltip: '更多操作',
+          icon: Icon(Icons.more_horiz, size: 22, color: textColor(b)),
+          color: bgHoverColor(b),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          onSelected: (v) {
+            if (v == 'change_password') _openChangePasswordDialog();
+            if (v == 'logout') _confirmLogout();
+          },
+          itemBuilder: (_) => [
+            const PopupMenuItem(
+              value: 'change_password',
+              height: 40,
+              child: Row(
+                children: [
+                  Icon(Icons.lock_outline, size: 18, color: kPrimary),
+                  SizedBox(width: 10),
+                  Text('更改密码'),
+                ],
+              ),
+            ),
+            const PopupMenuItem(
+              value: 'logout',
+              height: 40,
+              child: Row(
+                children: [
+                  Icon(Icons.logout, size: 18, color: kDanger),
+                  SizedBox(width: 10),
+                  Text('退出账户', style: TextStyle(color: kDanger)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
       child: LayoutBuilder(
         builder: (context, constraints) {
-          return SilkySingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            scrollSpeed: 1.6,
-            silkyScrollDuration: const Duration(milliseconds: 600),
-            animationCurve: Curves.easeOutCubic,
-            child: ConstrainedBox(
-              constraints:
-                  BoxConstraints(minHeight: constraints.maxHeight - 32),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+          return NotificationListener<ScrollNotification>(
+            onNotification: (n) {
+              if (n.metrics.pixels >= n.metrics.maxScrollExtent - 200) {
+                _loadMoreFavorites();
+              }
+              return false;
+            },
+            child: SilkySingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              scrollSpeed: 1.6,
+              silkyScrollDuration: const Duration(milliseconds: 600),
+              animationCurve: Curves.easeOutCubic,
+              child: ConstrainedBox(
+                constraints:
+                    BoxConstraints(minHeight: constraints.maxHeight - 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                   // ===== 用户信息卡（头像 + 昵称/UID/状态 + 熊爪余额） =====
                   Card(
                     elevation: 0,
@@ -1767,50 +1823,57 @@ class _ProfileViewState extends State<_ProfileView> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  // ===== 账户安全（页面下方） =====
-                  Card(
-                    elevation: 0,
-                    color: bgHoverColor(b),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Column(
+                  const SizedBox(height: 20),
+                  // ===== 我的收藏（小红书/抖音风格双列瀑布流） =====
+                  Padding(
+                    padding: const EdgeInsets.only(left: 2, bottom: 12),
+                    child: Row(
                       children: [
-                        // 更改密码
-                        ListTile(
-                          leading:
-                              const Icon(Icons.lock_outline, color: kPrimary),
-                          title: Text('更改密码',
-                              style:
-                                  TextStyle(color: textColor(b), fontSize: 14)),
-                          trailing: const Icon(Icons.chevron_right,
-                              size: 20, color: kInfo),
-                          onTap: _openChangePasswordDialog,
-                        ),
-                        const Divider(
-                            height: 1,
-                            indent: 52,
-                            endIndent: 16,
-                            color: Color(0x22000000)),
-                        // 退出账户
-                        ListTile(
-                          leading: const Icon(Icons.logout, color: kDanger),
-                          title: Text('退出账户',
-                              style: TextStyle(color: kDanger, fontSize: 14)),
-                          trailing: const Icon(Icons.chevron_right,
-                              size: 20, color: kInfo),
-                          onTap: _confirmLogout,
-                        ),
+                        Icon(Icons.bookmark_border,
+                            size: 18, color: kPrimary),
+                        const SizedBox(width: 6),
+                        Text('我的收藏',
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: textColor(b))),
+                        const SizedBox(width: 8),
+                        if (_favorites.isNotEmpty)
+                          Text('${_favorites.length}',
+                              style: TextStyle(
+                                  fontSize: 13, color: textMutedColor(b))),
                       ],
                     ),
                   ),
+                  // 收藏列表内容：加载中 / 失败重试 / 空态 / 瀑布流
+                  if (_favLoading && _favorites.isEmpty)
+                    const _SkeletonGrid(columns: 3)
+                  else if (_favLoadFailed && _favorites.isEmpty)
+                    _FavRetry(onRetry: _loadFavorites)
+                  else if (_favorites.isEmpty)
+                    _EmptyFavorites(b: b)
+                  else
+                    _MasonryGrid(
+                      posts: _favorites,
+                      columns: _favColumns(constraints.maxWidth),
+                      coverHeight: _favCoverHeight,
+                      onPostTap: (p) => _openFavPost(p),
+                    ),
+                  if (_favLoadingMore)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2)),
+                      ),
+                    )
+                  else if (!_favAllLoaded && _favorites.isNotEmpty)
+                    const SizedBox(height: 24),
                   const SizedBox(height: 16),
-                  // ===== 底部安全区（留白，避免通知悬浮时误触上方按钮） =====
-                  // 通知栈悬浮在内容区底部，底部预留一段不可交互留白，
-                  // 防止点击通知时误触到"更改密码/退出账户"按钮。
-                  const SizedBox(height: 72),
                 ],
+              ),
               ),
             ),
           );
@@ -1819,7 +1882,110 @@ class _ProfileViewState extends State<_ProfileView> {
     );
   }
 
-  /// 打开编辑资料对话框（改昵称 + 上传头像）
+  // ===== 我的收藏：加载 =====
+
+  /// 计算收藏瀑布流列数（复用首页瀑布流算法：卡片最小宽约 240，间距 12）
+  int _favColumns(double width) {
+    const minCardWidth = 240.0;
+    const gap = 12.0;
+    final n = ((width + gap) / (minCardWidth + gap)).floor();
+    return n.clamp(1, 6).toInt();
+  }
+
+  /// 收藏卡片封面高度（与首页一致：确定性伪随机，落在 [170, 288] 区间）
+  double _favCoverHeight(Map<String, dynamic> post) {
+    final id = (post['id'] as num?)?.toInt() ?? 0;
+    final content = post['content']?.toString() ?? '';
+    final images = (post['images'] as List<dynamic>?) ?? const [];
+    final seed = ((id * 31 + content.length + images.length) % 100).abs();
+    return 170 + seed * 1.2;
+  }
+
+  /// 加载我的收藏第一页
+  Future<void> _loadFavorites() async {
+    if (_favLoading) return;
+    setState(() {
+      _favLoading = true;
+      _favLoadFailed = false;
+      _favPage = 1;
+    });
+    try {
+      final resp = await ApiClient.instance
+          .getMyFavorites(page: 1, pageSize: 12)
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (resp.statusCode == 200 && json['code'] == 0) {
+        final list = ((json['data'] ?? {})['list'] ?? []) as List;
+        setState(() {
+          _favorites.clear();
+          _favorites.addAll(list.map((e) => Map<String, dynamic>.from(e)));
+          _favPage = 1;
+          _favAllLoaded = list.length < 12;
+          _favLoading = false;
+        });
+      } else {
+        setState(() {
+          _favLoading = false;
+          _favLoadFailed = true;
+        });
+      }
+    } catch (_) {
+      setState(() {
+        _favLoading = false;
+        _favLoadFailed = true;
+      });
+    }
+  }
+
+  /// 加载更多收藏（触底自动加载）
+  Future<void> _loadMoreFavorites() async {
+    if (_favLoading ||
+        _favLoadingMore ||
+        _favAllLoaded ||
+        _favorites.isEmpty) {
+      return;
+    }
+    setState(() => _favLoadingMore = true);
+    try {
+      final resp = await ApiClient.instance
+          .getMyFavorites(page: _favPage + 1, pageSize: 12)
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (resp.statusCode == 200 && json['code'] == 0) {
+        final list = ((json['data'] ?? {})['list'] ?? []) as List;
+        setState(() {
+          _favPage++;
+          _favorites.addAll(list.map((e) => Map<String, dynamic>.from(e)));
+          _favAllLoaded = list.length < 12;
+          _favLoadingMore = false;
+        });
+      } else {
+        setState(() => _favLoadingMore = false);
+      }
+    } catch (_) {
+      setState(() => _favLoadingMore = false);
+    }
+  }
+
+  /// 点击收藏卡片 → 打开帖子详情
+  Future<void> _openFavPost(Map<String, dynamic> p) async {
+    final id = (p['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PostDetailPage(
+          postBrief: p,
+          postId: id,
+          currentUserId: (_user['id'] as num?)?.toInt() ?? 0,
+        ),
+      ),
+    );
+    // 从详情页返回后刷新收藏列表（可能取消了收藏）
+    _loadFavorites();
+  }
+
+  // ===== 我的收藏：加载 =====
+
   Future<void> _openEditDialog() async {
     final b = Theme.of(context).brightness;
     final nameCtrl = TextEditingController(text: _nickname);
@@ -2179,6 +2345,72 @@ class _ProfileViewState extends State<_ProfileView> {
     if (result == true && mounted) {
       widget.onLogout();
     }
+  }
+}
+
+/// 我的收藏：加载失败重试
+class _FavRetry extends StatelessWidget {
+  final VoidCallback onRetry;
+  const _FavRetry({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final b = Theme.of(context).brightness;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off, size: 42, color: textMutedColor(b)),
+            const SizedBox(height: 12),
+            Text('收藏加载失败',
+                style: TextStyle(fontSize: 14, color: textMutedColor(b))),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('重试'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: kPrimary,
+                side: const BorderSide(color: kPrimary, width: 1.2),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 我的收藏：空态（暂无收藏）
+class _EmptyFavorites extends StatelessWidget {
+  final Brightness b;
+  const _EmptyFavorites({required this.b});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 48),
+      decoration: BoxDecoration(
+        color: bgHoverColor(b),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.bookmark_border, size: 40, color: textMutedColor(b)),
+          const SizedBox(height: 12),
+          Text('还没有收藏任何动态',
+              style: TextStyle(fontSize: 14, color: textMutedColor(b))),
+          const SizedBox(height: 6),
+          Text('去广场逛逛，看到喜欢的内容点个收藏吧',
+              style: TextStyle(fontSize: 12, color: textMutedColor(b))),
+        ],
+      ),
+    );
   }
 }
 
@@ -2674,8 +2906,9 @@ class _ThemeOption extends StatelessWidget {
 class _PageScaffold extends StatelessWidget {
   final String title; // 页面标题
   final Widget child; // 页面内容
+  final List<Widget>? actions; // 标题栏右侧按钮
 
-  const _PageScaffold({required this.title, required this.child});
+  const _PageScaffold({required this.title, required this.child, this.actions});
 
   @override
   Widget build(BuildContext context) {
@@ -2683,16 +2916,23 @@ class _PageScaffold extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 页面标题
+        // 页面标题 + 右侧按钮
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
-          child: Text(
-            title,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              color: textColor(b),
-            ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: textColor(b),
+                  ),
+                ),
+              ),
+              if (actions != null) ...actions!,
+            ],
           ),
         ),
         // 页面内容
