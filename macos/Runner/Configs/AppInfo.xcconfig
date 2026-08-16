@@ -1,0 +1,15 @@
+// Application-level settings for the Runner target.
+//
+// This may be replaced with something auto-generated from metadata (e.g., pubspec.yaml) in the
+// future. If not, the values below would default to using the project name when this becomes a
+// 'flutter create' template.
+
+// The application's name. By default this is also the title of the Flutter window.
+// macOS 进程名 / 可执行名 / 菜单栏应用名均由此决定，需与 AppConfig.appName（lib/app_config.dart）保持一致
+PRODUCT_NAME = 耶熊
+
+// The application's bundle identifier
+PRODUCT_BUNDLE_IDENTIFIER = com.example.acgopc
+
+// The copyright displayed in application information
+PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../app_config.dart';
-import '../app_theme.dart';
+import '../core/app_config.dart';
+import '../core/app_theme.dart';
 
 /// 通用网络图片组件：统一「加载中占位 + 加载失败占位」，
 /// 图片加载不出来时显示底色 + 破损图标，不再空白一片。

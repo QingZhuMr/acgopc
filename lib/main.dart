@@ -20,35 +20,35 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:crop_image_pro/crop_image.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:silky_scroll/silky_scroll.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'api_client.dart';
-import 'app_config.dart';
-import 'app_service.dart';
-import 'app_theme.dart';
-import 'device_service.dart';
-import 'login_page.dart';
-import 'maintenance.dart';
-import 'notification_center.dart';
-import 'notification_page.dart';
-import 'notify.dart';
-import 'post_detail_page.dart';
-import 'publish_post_page.dart';
-import 'secure_storage.dart';
-import 'splash_page.dart';
-import 'theme_controller.dart';
-import 'updater.dart';
+import 'core/api_client.dart';
+import 'core/app_config.dart';
+import 'services/app_service.dart';
+import 'core/app_theme.dart';
+import 'core/device_service.dart';
+import 'pages/login_page.dart';
+import 'pages/maintenance.dart';
+import 'services/notification_center.dart';
+import 'pages/notification_page.dart';
+import 'widgets/notify.dart';
+import 'widgets/pick_images.dart';
+import 'pages/post_detail_page.dart';
+import 'pages/publish_post_page.dart';
+import 'services/secure_storage.dart';
+import 'pages/splash_page.dart';
+import 'services/theme_controller.dart';
+import 'services/updater.dart';
 import 'utils/net_image.dart';
-import 'ws_service.dart';
+import 'services/ws_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 初始化窗口管理器：隐藏系统标题栏，由 Flutter 自绘顶栏
+  // 初始化窗口管理器
   await windowManager.ensureInitialized();
 
   // 初始化应用服务（单实例 + 关闭驻留）；失败说明已有实例运行
@@ -59,11 +59,15 @@ void main() async {
   }
   // 全程序统一安全最小窗口尺寸（登录窗口与主窗口共用）
   const Size kMinWindowSize = Size(900, 640);
-  const options = WindowOptions(
-    size: Size(1080, 720),
+  // 标题栏策略：所有平台都隐藏原生标题栏，由 Flutter 自绘顶栏承担。
+  //   - macOS：隐藏原生栏后红黄绿窗口按钮仍显示在左上角，自绘顶栏为其预留安全距离、不绘制窗口按钮
+  //   - Windows：隐藏原生栏，自绘顶栏绘制窗口按钮
+  final options = WindowOptions(
+    size: const Size(1080, 720),
     center: true,
     minimumSize: kMinWindowSize,
-    // 隐藏原生标题栏（保留可拖拽区域由自绘顶栏承担）
+    // 窗口标题（任务栏 / 菜单栏展示名 = AppConfig.appName）
+    title: AppConfig.appName,
     titleBarStyle: TitleBarStyle.hidden,
   );
   windowManager.waitUntilReadyToShow(options, () async {
@@ -247,6 +251,11 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
 
   /// 从通知/应用内通知跳转到帖子详情
   void _openPostFromNotice(int postId, String postContent) {
+    // 双端统一：在内容区打开帖子（保留左侧导航栏，不遮盖）
+    if (_HomePageState.current?.mounted == true) {
+      _HomePageState.current!.openPostInContent(postId, postContent, null);
+      return;
+    }
     final nav = _navigatorKey.currentState;
     if (nav == null) return;
     final uid = _user == null ? 0 : _resolveCurrentUid(_user!);
@@ -397,37 +406,52 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  // 当前选中的导航索引（0=首页，1=个人中心，2=设置）
+  /// 当前挂载的实例（macOS 用于 WS 推送在内容区打开帖子，保留左侧导航栏）
+  static _HomePageState? current;
+
+  // 当前选中的导航索引（0=广场，1=个人中心）
   int _currentIndex = 0;
+
+  /// macOS 内容区覆盖页（发帖/详情内嵌展示，保留左侧导航栏，无返回按钮）
+  /// 非 macOS 恒为 null
+  Widget? _macOverlay;
+
+  /// 通知 tab 索引（双端统一为 2）
+  int get _notificationIndex => 2;
+
+  /// 设置 tab 索引（双端统一为 3，通知 tab 占第 2 位）
+  int get _settingsIndex => 3;
 
   @override
   void initState() {
     super.initState();
+    // 记录当前实例（macOS WS 推送在内容区打开帖子用）
+    _HomePageState.current = this;
     // 监听通知中心（未读数变化时刷新铃铛角标）
     NotificationCenter.instance.addListener(_onNotifyChanged);
   }
 
   @override
   void dispose() {
+    if (_HomePageState.current == this) _HomePageState.current = null;
     NotificationCenter.instance.removeListener(_onNotifyChanged);
     super.dispose();
   }
 
-  void _onNotifyChanged() {
-    if (mounted) setState(() {});
+  /// 在内容区打开帖子（WS 推送/简单跳转用，保留左侧导航栏）
+  void openPostInContent(int postId, String postContent, int? commentId) {
+    if (!mounted) return;
+    _showPostFromNoticeOverlay(postId, postContent, commentId);
   }
 
-  /// 打开通知中心页（铃铛入口）
-  Future<void> _openNotificationPage() async {
-    final uid = _HomePageState._resolveUid(widget.user);
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => NotificationPage(
-          currentUserId: uid,
-          onChanged: () => NotificationCenter.instance.fetchUnreadForce(),
-        ),
-      ),
-    );
+  /// 在内容区打开帖子（完整帖子数据，保留左侧导航栏）
+  void openPostFullInContent(Map<String, dynamic> post, int id) {
+    if (!mounted) return;
+    _showPostOverlay(post, id);
+  }
+
+  void _onNotifyChanged() {
+    if (mounted) setState(() {});
   }
 
   /// 从 user map 解析用户 id（兼容 'id' / 'user_id' 字段）
@@ -447,10 +471,17 @@ class _HomePageState extends State<HomePage> {
   // 都能随 `_currentIndex` 实时更新（切到个人中心时刷新收藏列表）。
   List<_NavItem> get _navItems => [
         _NavItem(
-            Icons.space_dashboard_rounded, '广场', _HomeView(user: widget.user)),
+          Icons.space_dashboard_rounded,
+          '广场',
+          _HomeView(
+            user: widget.user,
+            onOpenPublish: _showPublishOverlay,
+            onOpenPost: _showPostOverlay,
+          ),
+        ),
         _NavItem(
           Icons.person_outline,
-          '个人中心',
+          '我的',
           _ProfileView(
             user: widget.user,
             onLogout: widget.onLogout,
@@ -460,6 +491,17 @@ class _HomePageState extends State<HomePage> {
               // _ProfileView 会直接更新共享的 user map，这里只需触发 rebuild。
               if (mounted) setState(() {});
             },
+          ),
+        ),
+        // 通知作为侧边栏 tab 内嵌（双端统一：不 push、无返回按钮、不遮盖导航栏）
+        _NavItem(
+          Icons.notifications_none_rounded,
+          '通知',
+          NotificationPage(
+            currentUserId: _resolveUid(widget.user),
+            embedded: true,
+            onChanged: () => NotificationCenter.instance.fetchUnreadForce(),
+            onOpenPost: _showPostFromNoticeOverlay,
           ),
         ),
         _NavItem(
@@ -473,21 +515,116 @@ class _HomePageState extends State<HomePage> {
         ),
       ];
 
-  /// 导航栏固定宽度（与顶栏左侧分色宽度一致）
-  static const double _railWidth = 72;
+  /// macOS 侧边栏宽度（Finder 风格：图标 + 文字），双端统一
+  static const double _macRailWidth = 150;
 
-  /// 当前登录用户昵称
-  String get _userNickname {
-    final n = widget.user['nickname'] as String?;
-    if (n != null && n.isNotEmpty) return n;
-    return (widget.user['phone'] as String?) ?? '用户';
+  /// 导航栏实际宽度：双端统一 Finder 风格侧边栏（宽 150），方便统一修改
+  double get _effectiveRailWidth => _macRailWidth;
+
+  /// 切换导航 tab（macOS 同时清空内容区覆盖页）
+  void _switchTab(int index) {
+    setState(() {
+      _macOverlay = null;
+      _currentIndex = index;
+    });
   }
 
-  /// 当前登录用户头像 URL（相对路径自动拼后端域名）
-  String? get _userAvatar {
-    final raw = widget.user['avatar'] as String?;
-    if (raw == null || raw.isEmpty) return null;
-    return AppConfig.resolveUrl(raw);
+  /// macOS：在内容区显示发帖页覆盖（保留导航栏）
+  void _showPublishOverlay() {
+    setState(() {
+      _macOverlay = PublishPostPage(
+        user: widget.user,
+        embedded: true,
+        onBack: () => setState(() => _macOverlay = null),
+        // 发布成功后：在内容区展示新帖子详情（保留左侧导航栏）
+        onPublished: (postId, brief) {
+          final currentUid = _resolveUid(widget.user);
+          setState(() {
+            _macOverlay = PostDetailPage(
+              postBrief: brief,
+              postId: postId,
+              currentUserId: currentUid,
+              embedded: true,
+              onBack: () => setState(() => _macOverlay = null),
+            );
+          });
+        },
+      );
+    });
+  }
+
+  /// 在内容区显示帖子详情覆盖（保留导航栏）
+  void _showPostOverlay(Map<String, dynamic> post, int id) {
+    final currentUid = _resolveUid(widget.user);
+    setState(() {
+      _macOverlay = PostDetailPage(
+        postBrief: post,
+        postId: id,
+        currentUserId: currentUid,
+        embedded: true,
+        onBack: () => setState(() => _macOverlay = null),
+      );
+    });
+  }
+
+  /// 从通知打开帖子，用内容区覆盖（保留左侧导航栏，可定位到评论）
+  void _showPostFromNoticeOverlay(int postId, String postContent, int? commentId) {
+    final currentUid = _resolveUid(widget.user);
+    setState(() {
+      _macOverlay = PostDetailPage(
+        postBrief: {'id': postId, 'content': postContent},
+        postId: postId,
+        currentUserId: currentUid,
+        embedded: true,
+        focusCommentId: (commentId != null && commentId > 0) ? commentId : null,
+        onBack: () => setState(() => _macOverlay = null),
+      );
+    });
+  }
+
+  /// macOS：Finder 风格侧边栏（宽栏，图标 + 文字，左对齐）
+  Widget _buildMacRail(Brightness b) {
+    return Column(
+      children: [
+        // 顶部留白：让导航项避开顶栏区域，与 Finder 侧边栏间距一致
+        const SizedBox(height: 16),
+        // 导航项（广场）
+        _MacRailItem(
+          icon: Icons.space_dashboard_rounded,
+          label: '广场',
+          selected: _currentIndex == 0,
+          brightness: b,
+          onTap: () => _switchTab(0),
+        ),
+        // 导航项（个人中心）
+        _MacRailItem(
+          icon: Icons.person_outline,
+          label: '我的',
+          selected: _currentIndex == 1,
+          brightness: b,
+          onTap: () => _switchTab(1),
+        ),
+        const Spacer(),
+        // 通知（双端统一：作为 tab 内嵌）
+        _MacRailItem(
+          icon: Icons.notifications_none_rounded,
+          label: '通知',
+          selected: _currentIndex == _notificationIndex,
+          brightness: b,
+          badge: NotificationCenter.instance.unread,
+          onTap: () => _switchTab(_notificationIndex),
+        ),
+        // 设置
+        _MacRailItem(
+          icon: Icons.settings_outlined,
+          label: '设置',
+          selected: _currentIndex == _settingsIndex,
+          brightness: b,
+          onTap: () => _switchTab(_settingsIndex),
+        ),
+        const SizedBox(height: 12),
+      ],
+    );
   }
 
   @override
@@ -498,105 +635,119 @@ class _HomePageState extends State<HomePage> {
       backgroundColor: bgColor(b),
       body: Column(
         children: [
-          // ========== 自绘顶栏（左右分色 + 窗口控制按钮） ==========
+          // ========== 自绘顶栏（macOS：红黄绿安全区 + logo，无窗口按钮；Windows：窗口按钮） ==========
           _TitleBar(
-            navWidth: _railWidth,
+            navWidth: _effectiveRailWidth,
             brightness: b,
           ),
           // ========== 下方主体：左侧导航 + 右侧内容 ==========
           Expanded(
             child: Row(
               children: [
-                // 左侧导航栏（副区块背景，无边框，窄栏，自绘精确对齐）
+                // 左侧导航栏（副区块背景，无边框，Finder 风格，双端一致）
                 Container(
-                  width: _railWidth,
+                  width: _effectiveRailWidth,
                   color: bgSoftColor(b),
-                  child: Column(
-                    children: [
-                      // 顶部留白：让首页图标中心与右侧内容页标题中心(≈74px)精确对齐
-                      const SizedBox(height: 10),
-                      // 首页图标按钮（48px 高，中心 = 40 + 10 + 24 = 74px）
-                      SizedBox(
-                        width: 68,
-                        height: 48,
-                        child: Material(
-                          // 不显示背景框，只靠图标变色标识选中态
-                          color: Colors.transparent,
-                          child: Tooltip(
-                            message: '广场',
-                            child: InkWell(
-                              onTap: () => setState(() => _currentIndex = 0),
-                              mouseCursor: SystemMouseCursors.click, // 悬停显示手指
-                              child: Icon(
-                                Icons.space_dashboard_rounded,
-                                size: 22,
-                                color: _currentIndex == 0
-                                    ? kPrimary
-                                    : textMutedColor(b),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      // 通知铃铛（有未读时右上角红色角标，带数字）—— 头像上方
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: _NotificationBell(
-                          unread: NotificationCenter.instance.unread,
-                          onTap: _openNotificationPage,
-                        ),
-                      ),
-                      // 个人中心入口（当前登录用户头像，点击进入个人中心页）
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Tooltip(
-                          message: '个人中心',
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.click, // 悬停显示手指
-                            child: GestureDetector(
-                              onTap: () => setState(() => _currentIndex = 1),
-                              child: _UserAvatar(
-                                avatarUrl: _userAvatar,
-                                nickname: _userNickname,
-                                size: 36,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      // 底部固定设置按钮（图标 + tooltip，不显示文字）
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: IconButton(
-                          tooltip: '设置',
-                          icon: Icon(
-                            Icons.settings_outlined,
-                            size: 22,
-                            color: _currentIndex == 2
-                                ? kPrimary
-                                : textMutedColor(b),
-                          ),
-                          onPressed: () => setState(() => _currentIndex = 2),
-                        ),
-                      ),
-                    ],
-                  ),
+                  child: _buildMacRail(b),
                 ),
 
                 // 右侧内容区（无分割线，无边框）
                 Expanded(
-                  child: IndexedStack(
-                    index: _currentIndex,
-                    children: [
-                      for (final item in _navItems) item.view,
-                    ],
-                  ),
+                  child: _macOverlay != null
+                      // macOS 覆盖页（发帖/详情内嵌，保留导航栏）
+                      ? _macOverlay!
+                      : IndexedStack(
+                          index: _currentIndex,
+                          children: [
+                            for (final item in _navItems) item.view,
+                          ],
+                        ),
                 ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// macOS Finder 风格侧边栏导航项（图标 + 文字，左对齐）
+class _MacRailItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final Brightness brightness;
+  final int badge;
+  final VoidCallback onTap;
+
+  const _MacRailItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.brightness,
+    this.badge = 0,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(kRadiusMd),
+        onTap: onTap,
+        mouseCursor: SystemMouseCursors.click,
+        hoverColor: bgHoverColor(brightness),
+        child: SizedBox(
+          height: 36,
+          child: Row(
+            children: [
+              const SizedBox(width: 10),
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    icon,
+                    size: 20,
+                    color: selected ? kPrimary : textMutedColor(brightness),
+                  ),
+                  if (badge > 0)
+                    Positioned(
+                      right: -8,
+                      top: -5,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: kDanger,
+                          borderRadius: BorderRadius.circular(kRadiusFull),
+                        ),
+                        child: Text(
+                          badge > 99 ? '99+' : '$badge',
+                          style: const TextStyle(
+                              fontSize: 9, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    color: selected ? textColor(brightness) : textMutedColor(brightness),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -614,6 +765,34 @@ class _TitleBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // macOS：隐藏原生栏后红黄绿按钮悬浮在左上角，导航栏色区域整体扩展 kMacTrafficLightWidth
+    // 容纳按钮安全距离，logo 居中于整个导航栏色区（远离按钮），右侧仅拖拽（无窗口按钮）。
+    // 顶栏高度 20：让内容区尽可能上移（Windows 保持 60）
+    if (Platform.isMacOS) {
+      return SizedBox(
+        height: 20,
+        child: Row(
+          children: [
+            // 左侧导航栏色区（已含红黄绿安全距离，macOS 不显示 logo）
+            Container(
+              width: navWidth,
+              color: bgSoftColor(brightness),
+            ),
+            // 右侧：与内容栏同色，可拖拽（无窗口控制按钮）
+            Expanded(
+              child: Container(
+                color: bgColor(brightness),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onPanStart: (_) => windowManager.startDragging(),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return SizedBox(
       height: 60,
       child: Row(
@@ -711,7 +890,11 @@ class _WinButton extends StatelessWidget {
 class _HomeView extends StatefulWidget {
   final Map<String, dynamic> user;
 
-  const _HomeView({required this.user});
+  /// macOS 发帖/详情回调（由主窗口处理内容区覆盖）；非 macOS 为 null 则走原 push
+  final VoidCallback? onOpenPublish;
+  final void Function(Map<String, dynamic> post, int id)? onOpenPost;
+
+  const _HomeView({required this.user, this.onOpenPublish, this.onOpenPost});
 
   @override
   State<_HomeView> createState() => _HomeViewState();
@@ -896,7 +1079,7 @@ class _HomeViewState extends State<_HomeView>
           padding: const EdgeInsets.symmetric(horizontal: 22),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20)),
+              borderRadius: BorderRadius.circular(kRadiusCard)),
         ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
@@ -919,6 +1102,11 @@ class _HomeViewState extends State<_HomeView>
 
   /// 打开发动态页面
   Future<void> _openPublishPage() async {
+    // 双端统一：发帖页作为内容区内嵌覆盖展示（保留左侧导航栏）
+    if (widget.onOpenPublish != null) {
+      widget.onOpenPublish!();
+      return;
+    }
     await Navigator.of(context).push<Object?>(
       MaterialPageRoute(
         builder: (_) => PublishPostPage(
@@ -946,6 +1134,11 @@ class _HomeViewState extends State<_HomeView>
   Future<void> _openPostDetail(Map<String, dynamic> post) async {
     final id = (post['id'] as num?)?.toInt() ?? 0;
     if (id <= 0) return;
+    // 双端统一：详情页作为内容区内嵌覆盖展示（保留左侧导航栏）
+    if (widget.onOpenPost != null) {
+      widget.onOpenPost!(post, id);
+      return;
+    }
     // 当前登录用户 id：优先 'id'，兼容 'user_id'，取不到给 0（无法判断则默认非本人）
     final currentUid = _resolveUid(widget.user);
     await Navigator.of(context).push(
@@ -971,7 +1164,7 @@ class _HomeViewState extends State<_HomeView>
               height: 40,
               decoration: BoxDecoration(
                 color: bgHoverColor(b),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(kRadiusCard),
               ),
               child: TextField(
                 controller: _searchCtrl,
@@ -1197,12 +1390,12 @@ class _PostCardState extends State<_PostCard> {
             onTap: widget.onTap,
             mouseCursor: SystemMouseCursors.click, // 悬停显示手指
             onHighlightChanged: (v) => setState(() => _pressed = v),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: kRadiusCardAll,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 160),
               decoration: BoxDecoration(
                 color: bgColor(b),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: kRadiusCardAll,
                 border: Border.all(color: borderColor),
                 boxShadow: _hover
                     ? [
@@ -1303,12 +1496,16 @@ class _CoverImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return NetImage(
-      url: url,
-      width: double.infinity,
-      height: height,
-      fit: BoxFit.cover,
-      cacheWidth: 480, // 限制解码尺寸，降低内存与解码开销，提升滚动流畅度
+    // 封面图片自身裁剪顶部圆角，确保圆角平滑（比依赖外层整体 clip 更细腻）
+    return ClipRRect(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(kRadiusCard)),
+      child: NetImage(
+        url: url,
+        width: double.infinity,
+        height: height,
+        fit: BoxFit.cover,
+        cacheWidth: 480, // 限制解码尺寸，降低内存与解码开销，提升滚动流畅度
+      ),
     );
   }
 }
@@ -1455,7 +1652,7 @@ class _SkeletonCard extends StatelessWidget {
           height: height,
           decoration: BoxDecoration(
             color: base,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(kRadiusMd),
           ),
         ),
         const SizedBox(height: 10),
@@ -1472,7 +1669,7 @@ class _SkeletonCard extends StatelessWidget {
                 height: 10,
                 decoration: BoxDecoration(
                   color: base,
-                  borderRadius: BorderRadius.circular(5),
+                  borderRadius: BorderRadius.circular(kRadiusSm),
                 ),
               ),
             ),
@@ -1484,7 +1681,7 @@ class _SkeletonCard extends StatelessWidget {
           height: 10,
           decoration: BoxDecoration(
             color: base,
-            borderRadius: BorderRadius.circular(5),
+            borderRadius: BorderRadius.circular(kRadiusSm),
           ),
         ),
       ],
@@ -1685,7 +1882,7 @@ class _ProfileViewState extends State<_ProfileView> {
           icon: Icon(Icons.more_horiz, size: 22, color: textColor(b)),
           color: bgHoverColor(b),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(kRadiusBtn),
           ),
           onSelected: (v) {
             if (v == 'change_password') _openChangePasswordDialog();
@@ -1742,7 +1939,7 @@ class _ProfileViewState extends State<_ProfileView> {
                     elevation: 0,
                     color: bgHoverColor(b),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(kRadiusBtn),
                     ),
                     child: Column(
                       children: [
@@ -1801,7 +1998,7 @@ class _ProfileViewState extends State<_ProfileView> {
                               InkWell(
                                 onTap: _openEditDialog,
                                 mouseCursor: SystemMouseCursors.click, // 悬停显示手指
-                                borderRadius: BorderRadius.circular(6),
+                                borderRadius: BorderRadius.circular(kRadiusSm),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 12, vertical: 6),
@@ -1992,6 +2189,11 @@ class _ProfileViewState extends State<_ProfileView> {
   Future<void> _openFavPost(Map<String, dynamic> p) async {
     final id = (p['id'] as num?)?.toInt() ?? 0;
     if (id <= 0) return;
+    // 双端统一：在内容区打开帖子详情（保留左侧导航栏，不遮盖）
+    if (_HomePageState.current?.mounted == true) {
+      _HomePageState.current!.openPostFullInContent(p, id);
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PostDetailPage(
@@ -2019,7 +2221,7 @@ class _ProfileViewState extends State<_ProfileView> {
           return AlertDialog(
             backgroundColor: bgHoverColor(b),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(kRadiusMd),
             ),
             title: Text('编辑资料',
                 style: TextStyle(color: textColor(b), fontSize: 17)),
@@ -2056,7 +2258,7 @@ class _ProfileViewState extends State<_ProfileView> {
                             child: InkWell(
                               onTap: () => _pickAndCropAvatar(setDialogState),
                               mouseCursor: SystemMouseCursors.click, // 悬停显示手指
-                              borderRadius: BorderRadius.circular(18),
+                              borderRadius: kRadiusCardAll,
                               child: Container(
                                 width: 36,
                                 height: 36,
@@ -2093,12 +2295,12 @@ class _ProfileViewState extends State<_ProfileView> {
                       filled: true,
                       fillColor: bgColor(b),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(kRadiusMd),
                         borderSide: BorderSide(
                             color: textFaintColor(b).withValues(alpha: .3)),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(kRadiusMd),
                         borderSide:
                             const BorderSide(color: kPrimary, width: 1.5),
                       ),
@@ -2136,22 +2338,12 @@ class _ProfileViewState extends State<_ProfileView> {
   /// 选择头像图片并裁剪：选图 → 打开裁剪对话框 → 得到裁剪后的 PNG bytes → 本地预览
   Future<void> _pickAndCropAvatar(StateSetter setDialogState) async {
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.image,
-        allowMultiple: false,
-      );
-      if (result == null || result.files.isEmpty) return;
-      final file = result.files.single;
+      final picked = await pickImages(allowMultiple: false);
+      if (picked.isEmpty) return;
+      final file = picked.single;
 
       // 读取原图 bytes（裁剪对话框用）
-      final Uint8List sourceBytes;
-      if (file.bytes != null) {
-        sourceBytes = file.bytes!;
-      } else if (file.path != null) {
-        sourceBytes = File(file.path!).readAsBytesSync();
-      } else {
-        return;
-      }
+      final Uint8List sourceBytes = file.bytes;
 
       // 原始图片 ≤5MB 限制
       if (sourceBytes.length > 5 * 1024 * 1024) {
@@ -2252,7 +2444,7 @@ class _ProfileViewState extends State<_ProfileView> {
           return AlertDialog(
             backgroundColor: bgHoverColor(b),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(kRadiusMd),
             ),
             title: Text('更改密码',
                 style: TextStyle(color: textColor(b), fontSize: 17)),
@@ -2417,7 +2609,7 @@ class _EmptyFavorites extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 48),
       decoration: BoxDecoration(
         color: bgHoverColor(b),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(kRadiusMd),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -2447,7 +2639,7 @@ class _StatusBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: fg.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(kRadiusSm),
       ),
       child: Text(
         banned ? '封禁' : '正常',
@@ -2512,7 +2704,7 @@ class _AvatarCropDialogState extends State<_AvatarCropDialog> {
     return Dialog(
       backgroundColor: bgHoverColor(b),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(kRadiusMd),
       ),
       insetPadding: const EdgeInsets.all(32),
       child: SizedBox(
@@ -2534,7 +2726,7 @@ class _AvatarCropDialogState extends State<_AvatarCropDialog> {
                   InkWell(
                     onTap: () => Navigator.pop(context),
                     mouseCursor: SystemMouseCursors.click, // 悬停显示手指
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(kRadiusSm),
                     child: Padding(
                       padding: const EdgeInsets.all(6),
                       child: Icon(Icons.close,
@@ -2694,12 +2886,12 @@ class _PwdField extends StatelessWidget {
         filled: true,
         fillColor: bgColor(brightness),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(kRadiusMd),
           borderSide:
               BorderSide(color: textFaintColor(brightness).withValues(alpha: .3)),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(kRadiusMd),
           borderSide: const BorderSide(color: kPrimary, width: 1.5),
         ),
       ),
@@ -2754,7 +2946,7 @@ class _SettingsViewState extends State<_SettingsView> {
             elevation: 0,
             color: bgHoverColor(b),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(kRadiusMd),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2801,7 +2993,7 @@ class _SettingsViewState extends State<_SettingsView> {
             elevation: 0,
             color: bgHoverColor(b),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(kRadiusMd),
             ),
             child: ListTile(
               leading: const Icon(Icons.system_update, color: kPrimary),
@@ -2965,81 +3157,6 @@ class _PageScaffold extends StatelessWidget {
 
 /// 通知铃铛图标（头像上方）：有未读时右上角显示红色角标（带数字）
 ///
-/// 未读数 > 0 时显示红点+数字；数字超过 99 显示 "99+"。
-class _NotificationBell extends StatelessWidget {
-  final int unread;
-  final VoidCallback onTap;
-
-  const _NotificationBell({required this.unread, required this.onTap});
-
-  /// 角标显示文本
-  String get _badgeText {
-    if (unread <= 0) return '';
-    return unread > 99 ? '99+' : '$unread';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final b = Theme.of(context).brightness;
-    final hasUnread = unread > 0;
-    final badgeText = _badgeText;
-    return SizedBox(
-      width: 48,
-      height: 40,
-      child: Tooltip(
-        message: '通知${hasUnread ? '（$badgeText 条未读）' : ''}',
-        child: Material(
-          color: Colors.transparent,
-          shape: const StadiumBorder(),
-          child: InkWell(
-            customBorder: const StadiumBorder(),
-            mouseCursor: SystemMouseCursors.click, // 悬停显示手指
-            onTap: onTap,
-            hoverColor: bgHoverColor(b),
-            child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Icon(
-                Icons.notifications_none_rounded,
-                size: 22,
-                color: textMutedColor(b),
-              ),
-              // 未读角标（右上角）
-              if (hasUnread)
-                Positioned(
-                  top: 2,
-                  right: 3,
-                  child: Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: badgeText.length > 2 ? 4 : 5,
-                      vertical: 1.5,
-                    ),
-                    constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-                    decoration: BoxDecoration(
-                      color: kDanger,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: bgSoftColor(b), width: 1.5),
-                    ),
-                    child: Text(
-                      badgeText,
-                      style: const TextStyle(
-                        fontSize: 9,
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        height: 1,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// 用户头像：有 URL 时显示图片，加载失败 fallback 到昵称首字
 class _UserAvatar extends StatelessWidget {
   final String? avatarUrl;
