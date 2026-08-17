@@ -815,6 +815,7 @@ class _TitleBar extends StatelessWidget {
             child: Container(
               color: bgColor(brightness),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start, // 按钮靠顶部对齐（右上角）
                 children: [
                   // 可拖拽区域（撑满，可拖动窗口）
                   Expanded(
@@ -824,7 +825,7 @@ class _TitleBar extends StatelessWidget {
                       child: const SizedBox.expand(),
                     ),
                   ),
-                  // 窗口控制按钮
+                  // 窗口控制按钮（正方形 1:1，靠右上角）
                   _WinButton(
                     icon: Icons.remove,
                     onTap: () => windowManager.minimize(),
@@ -855,7 +856,12 @@ class _TitleBar extends StatelessWidget {
 }
 
 /// 窗口控制按钮
-class _WinButton extends StatelessWidget {
+///
+/// 遵循微软 Windows 行业规范：
+/// - 关闭按钮 hover：红色胶囊（`#E81123`，微软标准关闭红），图标变白
+/// - 最小化 / 最大化 hover：灰色胶囊（明暗主题自适应）
+/// - 胶囊无圆角，且顶到窗口顶栏上边缘与右边缘（由 `_TitleBar` 布局保证对齐）
+class _WinButton extends StatefulWidget {
   final IconData icon;
   final bool isClose;
   final VoidCallback onTap;
@@ -867,19 +873,44 @@ class _WinButton extends StatelessWidget {
   });
 
   @override
+  State<_WinButton> createState() => _WinButtonState();
+}
+
+class _WinButtonState extends State<_WinButton> {
+  bool _hovered = false;
+
+  @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
+    // 关闭按钮 hover 用微软标准红；其余用主题灰色胶囊
+    final bg = _hovered
+        ? (widget.isClose
+            ? const Color(0xFFE81123)
+            : bgHoverColor(b))
+        : Colors.transparent;
+    // 图标颜色：关闭按钮 hover 变白；其余始终用弱文字色
+    final iconColor = widget.isClose && _hovered
+        ? Colors.white
+        : textMutedColor(b);
     return SizedBox(
       width: 46,
-      height: 60,
-      child: InkWell(
-        onTap: onTap,
-        mouseCursor: SystemMouseCursors.click, // 悬停显示手指
-        hoverColor: isClose ? const Color(0xFFE81123) : bgHoverColor(b),
-        child: Icon(
-          icon,
-          size: 16,
-          color: isClose ? null : textMutedColor(b),
+      height: 46, // 正方形 1:1，靠右上角
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: InkWell(
+          onTap: widget.onTap,
+          mouseCursor: SystemMouseCursors.click, // 悬停显示手指
+          hoverColor: Colors.transparent, // 背景色由 MouseRegion 控制，避免双层叠加
+          child: Container(
+            color: bg, // 无圆角，填满按钮区域，与窗口边缘对齐
+            alignment: Alignment.center,
+            child: Icon(
+              widget.icon,
+              size: 16,
+              color: iconColor,
+            ),
+          ),
         ),
       ),
     );
