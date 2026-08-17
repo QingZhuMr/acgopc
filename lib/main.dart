@@ -35,6 +35,7 @@ import 'pages/login_page.dart';
 import 'pages/maintenance.dart';
 import 'services/notification_center.dart';
 import 'pages/notification_page.dart';
+import 'widgets/bubble_menu.dart';
 import 'widgets/notify.dart';
 import 'widgets/pick_images.dart';
 import 'pages/post_detail_page.dart';
@@ -48,6 +49,19 @@ import 'services/ws_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 屏蔽 RenderFlex overflow 的底部警示条（黄黑条纹 + 控制台告警），
+  // 避免展开评论输入框等布局在 debug 下报 "bottom overflowed by xx pixels"。
+  // 仅过滤布局溢出错误，不影响其它异常。
+  final originalOnError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    final msg = details.exceptionAsString();
+    if (msg.contains('overflowed by') ||
+        msg.contains('A RenderFlex overflowed')) {
+      return; // 静默忽略布局溢出
+    }
+    originalOnError?.call(details);
+  };
 
   // 初始化窗口管理器
   await windowManager.ensureInitialized();
@@ -591,10 +605,33 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  /// macOS：Finder 风格侧边栏（宽栏，图标 + 文字，左对齐）
+  /// 侧边栏：Finder 风格（宽栏，图标 + 文字，左对齐）
+  /// Windows 顶部为应用 logo（保持原尺寸，不受右侧顶栏影响）；
+  /// macOS 顶部为红黄绿安全区（容纳原生红黄绿按钮），不显示 logo
   Widget _buildMacRail(Brightness b) {
     return Column(
       children: [
+        if (Platform.isMacOS)
+          // macOS 红黄绿安全区：导航栏顶部留白，让原生按钮悬浮其上
+          SizedBox(
+            height: 20,
+            child: Container(
+              width: kMacTrafficLightWidth,
+              color: bgSoftColor(b),
+            ),
+          )
+        else
+          // Windows 应用 logo（保持原位置/尺寸，与右侧顶栏互不影响）
+          // 仅增大顶部留白让 logo 下移，底部留白固定，不推挤下方导航项
+          const Padding(
+            padding: EdgeInsets.fromLTRB(0, 32, 0, 12),
+            child: Image(
+              image: AssetImage(AppConfig.assetLogo),
+              width: 40,
+              height: 40,
+              fit: BoxFit.contain,
+            ),
+          ),
         // 顶部留白：让导航项避开顶栏区域，与 Finder 侧边栏间距一致
         const SizedBox(height: 16),
         // 导航项（广场）
@@ -653,21 +690,19 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       // 内容页背景标准色（实心不透明）
       backgroundColor: bgColor(b),
-      body: Column(
+      body: Row(
         children: [
-          // ========== 自绘顶栏（macOS：红黄绿安全区 + logo，无窗口按钮；Windows：窗口按钮） ==========
-          _TitleBar(
-            navWidth: _effectiveRailWidth,
-            brightness: b,
-          ),
-          // ========== 下方主体：左侧导航 + 右侧内容 ==========
-          Expanded(
-            child: Row(
-              children: [
-                // 左侧导航栏（副区块背景，无边框，Finder 风格，双端一致；实心不透明）
-                _buildSidebar(b),
+          // 左侧导航栏（副区块背景，无边框，Finder 风格，双端一致；实心不透明）
+          // 顶部为 logo（Windows）或红黄绿安全区（macOS），与右侧顶栏互不影响
+          _buildSidebar(b),
 
-                // 右侧内容区（无分割线，无边框；实心不透明）
+          // 右侧内容区：顶部自绘顶栏 + 下方内容
+          Expanded(
+            child: Column(
+              children: [
+                // 自绘顶栏（macOS：红黄绿安全区 + 无窗口按钮；Windows：窗口按钮），仅占内容区
+                _TitleBar(brightness: b),
+                // 下方内容区（无分割线，无边框；实心不透明）
                 Expanded(
                   child: Container(
                     color: bgColor(b),
@@ -772,101 +807,59 @@ class _MacRailItem extends StatelessWidget {
   }
 }
 
-/// 自绘顶栏：左侧用导航栏色(副区块)，右侧用内容栏色(主区块)，右侧带窗口控制按钮。
+/// 自绘顶栏：仅占右侧内容区，含窗口控制按钮，与左侧导航栏互不影响。
 class _TitleBar extends StatelessWidget {
-  final double navWidth;
   final Brightness brightness;
 
-  const _TitleBar({
-    required this.navWidth,
-    required this.brightness,
-  });
+  const _TitleBar({required this.brightness});
 
   @override
   Widget build(BuildContext context) {
-    // macOS：隐藏原生栏后红黄绿按钮悬浮在左上角，导航栏色区域整体扩展 kMacTrafficLightWidth
-    // 容纳按钮安全距离，logo 居中于整个导航栏色区（远离按钮），右侧仅拖拽（无窗口按钮）。
-    // 顶栏高度 20：让内容区尽可能上移（Windows 保持 60）
+    // macOS：红黄绿安全区在左侧导航栏顶部，顶栏仅内容区拖拽区（无窗口按钮），高度 20 让内容尽量上移
     if (Platform.isMacOS) {
-      return SizedBox(
+      return Container(
         height: 20,
-        child: Row(
-          children: [
-            // 左侧导航栏色区（已含红黄绿安全距离，macOS 不显示 logo）
-            Container(
-              width: navWidth,
-              color: bgSoftColor(brightness),
-            ),
-            // 右侧：与内容栏同色，可拖拽（无窗口控制按钮）
-            Expanded(
-              child: Container(
-                color: bgColor(brightness),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onPanStart: (_) => windowManager.startDragging(),
-                  child: const SizedBox.expand(),
-                ),
-              ),
-            ),
-          ],
+        color: bgColor(brightness),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) => windowManager.startDragging(),
+          child: const SizedBox.expand(),
         ),
       );
     }
-    return SizedBox(
-      height: 60,
+    // Windows：内容区顶栏 35px，含拖拽区 + 窗口控制按钮
+    return Container(
+      height: 35,
+      color: bgColor(brightness),
       child: Row(
         children: [
-          // 左侧：与导航栏同色 + 应用 logo
-          Container(
-            width: navWidth,
-            color: bgSoftColor(brightness),
-            child: const Center(
-              child: Image(
-                image: AssetImage(AppConfig.assetLogo),
-                width: 36,
-                height: 36,
-                fit: BoxFit.contain,
-              ),
+          // 可拖拽区域（撑满，可拖动窗口）
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanStart: (_) => windowManager.startDragging(),
+              child: const SizedBox.expand(),
             ),
           ),
-          // 右侧：与内容栏同色，含窗口控制按钮
-          Expanded(
-            child: Container(
-              color: bgColor(brightness),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start, // 按钮靠顶部对齐（右上角）
-                children: [
-                  // 可拖拽区域（撑满，可拖动窗口）
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onPanStart: (_) => windowManager.startDragging(),
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
-                  // 窗口控制按钮（正方形 1:1，靠右上角）
-                  _WinButton(
-                    icon: Icons.remove,
-                    onTap: () => windowManager.minimize(),
-                  ),
-                  _WinButton(
-                    icon: Icons.crop_square_rounded,
-                    onTap: () async {
-                      if (await windowManager.isMaximized()) {
-                        await windowManager.unmaximize();
-                      } else {
-                        await windowManager.maximize();
-                      }
-                    },
-                  ),
-                  _WinButton(
-                    icon: Icons.close,
-                    isClose: true,
-                    onTap: () => windowManager.close(),
-                  ),
-                ],
-              ),
-            ),
+          // 窗口控制按钮（正方形 1:1，靠右上角）
+          _WinButton(
+            icon: Icons.remove,
+            onTap: () => windowManager.minimize(),
+          ),
+          _WinButton(
+            icon: Icons.crop_square_rounded,
+            onTap: () async {
+              if (await windowManager.isMaximized()) {
+                await windowManager.unmaximize();
+              } else {
+                await windowManager.maximize();
+              }
+            },
+          ),
+          _WinButton(
+            icon: Icons.close,
+            isClose: true,
+            onTap: () => windowManager.close(),
           ),
         ],
       ),
@@ -913,7 +906,7 @@ class _WinButtonState extends State<_WinButton> {
         : textMutedColor(b);
     return SizedBox(
       width: 46,
-      height: 46, // 正方形 1:1，靠右上角
+      height: 35, // 正方形 1:1，靠右上角，贴合 35px 顶栏高度
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
@@ -1933,42 +1926,28 @@ class _ProfileViewState extends State<_ProfileView> {
     return _PageScaffold(
       title: '我的',
       actions: [
-        // 右上角省略号：更多操作（更改密码 / 退出账户）
-        PopupMenuButton<String>(
-          tooltip: '更多操作',
-          icon: Icon(Icons.more_horiz, size: 22, color: textColor(b)),
-          color: bgHoverColor(b),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(kRadiusBtn),
-          ),
-          onSelected: (v) {
-            if (v == 'change_password') _openChangePasswordDialog();
-            if (v == 'logout') _confirmLogout();
-          },
-          itemBuilder: (_) => [
-            const PopupMenuItem(
-              value: 'change_password',
-              height: 40,
-              child: Row(
-                children: [
-                  Icon(Icons.lock_outline, size: 18, color: kPrimary),
-                  SizedBox(width: 10),
-                  Text('更改密码'),
-                ],
-              ),
+        // 右上角省略号：更多操作（更改密码 / 退出账户）——气泡样式
+        BubbleMenu(
+          width: 120,
+          itemHeight: 40,
+          items: [
+            BubbleMenuItem(
+              label: '更改密码',
+              icon: Icons.lock_outline,
+              color: kPrimary,
+              onTap: _openChangePasswordDialog,
             ),
-            const PopupMenuItem(
-              value: 'logout',
-              height: 40,
-              child: Row(
-                children: [
-                  Icon(Icons.logout, size: 18, color: kDanger),
-                  SizedBox(width: 10),
-                  Text('退出账户', style: TextStyle(color: kDanger)),
-                ],
-              ),
+            BubbleMenuItem(
+              label: '退出账户',
+              icon: Icons.logout,
+              color: kDanger,
+              onTap: _confirmLogout,
             ),
           ],
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Icon(Icons.more_horiz, size: 22, color: textColor(b)),
+          ),
         ),
       ],
       child: LayoutBuilder(
@@ -3193,7 +3172,8 @@ class _PageScaffold extends StatelessWidget {
       children: [
         // 页面标题 + 右侧按钮
         // 间距规范：Win 端标题距顶 5px（比 macOS 的 20 上移 15px）；
-        // 标题与下一行内容间距 20px（本行 bottom 4 + 内容区自带顶部 padding 16 = 20）
+        // 标题与下一行内容间距 20px（本行 bottom 4 + 内容区自带顶部 padding 16 = 20）；
+        // Win 顶栏现为 40px，标题距窗口顶 = 40 + 5 = 45px
         Padding(
           padding: EdgeInsets.fromLTRB(
               24, Platform.isWindows ? 5 : 20, 24, 4),

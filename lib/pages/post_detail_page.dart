@@ -128,6 +128,9 @@ class _PostDetailPageState extends State<PostDetailPage> {
   int _pageIndex = _carouselBase; // PageView 实际无限下标（用于循环定位）
   bool _carouselPaused = false;
 
+  // 左侧图片区是否展开（默认展开；点击分割线按钮收起/展开）
+  bool _showImagePanel = true;
+
   @override
   void initState() {
     super.initState();
@@ -706,16 +709,75 @@ class _PostDetailPageState extends State<PostDetailPage> {
         ),
       );
     }
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // 左：图片轮播（与右侧 5:5 均分）
-        Expanded(child: _buildImageArea(b)),
-        // 分割线
-        Container(width: 1, color: b == Brightness.dark ? DarkColors.border : LightColors.border),
-        // 右：内容 + 评论 + 输入框
-        Expanded(child: _buildRightPanel(b)),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final totalW = constraints.maxWidth;
+        // 图片区宽度：展开时占一半，收起时缩到 0
+        final imgW = _showImagePanel ? totalW / 2 : 0.0;
+        // 右侧可用宽（图片区 + 折叠按钮之后）
+        final rightAvailW = totalW - imgW - 22;
+        // 右侧内容最大宽度限制（720px，用于输入框/emoji/评论区内容居中）
+        const maxPanelW = 720.0;
+        final panelW = rightAvailW < maxPanelW ? rightAvailW : maxPanelW;
+        return Stack(
+          children: [
+            // 左侧图片区（宽度带动画）
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: imgW,
+              child: ClipRect(child: _buildImageArea(b)),
+            ),
+            // 折叠按钮（跟随图片区右侧边缘）
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              left: imgW - 1,
+              top: 0,
+              bottom: 0,
+              width: 22,
+              child: _buildCollapseButton(b),
+            ),
+            // 右侧内容 + 评论 + emoji + 输入框（横跨右侧全宽：滚动条贴最右；内容内部居中受限）
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              left: imgW + 21,
+              top: 0,
+              bottom: 0,
+              right: 0,
+              child: _buildRightPanel(b, panelW),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 折叠左侧图片区的按钮：位于分割线处，展开时箭头朝左（◀ 收起），收起时箭头朝右（▶ 展开）
+  Widget _buildCollapseButton(Brightness b) {
+    return GestureDetector(
+      onTap: () => setState(() => _showImagePanel = !_showImagePanel),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          color: bgColor(b),
+          alignment: Alignment.center,
+          child: AnimatedRotation(
+            duration: const Duration(milliseconds: 300),
+            // 收起时旋转 180°（0.5 圈）使左箭头变右箭头
+            turns: _showImagePanel ? 0 : 0.5,
+            child: Icon(
+              Icons.chevron_left,
+              size: 16,
+              color: textMutedColor(b),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -844,13 +906,13 @@ class _PostDetailPageState extends State<PostDetailPage> {
     );
   }
 
-  /// 右：内容 + 评论 + 输入框（emoji 表情面板紧贴输入框上方）
-  Widget _buildRightPanel(Brightness b) {
+  /// 右：内容 + 评论（横跨右侧全宽，滚动条贴最右；内容居中受限）
+  Widget _buildRightPanel(Brightness b, double panelW) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 评论区
-        Expanded(child: _buildCommentList(b)),
+        // 评论区（SilkyListView 全宽，滚动条贴最右；内容项最大宽度受限居中）
+        Expanded(child: _buildCommentList(b, panelW)),
         // emoji 表情面板（紧贴底部输入框，带出现/收起动画）
         AnimatedSize(
           duration: const Duration(milliseconds: 220),
@@ -875,14 +937,14 @@ class _PostDetailPageState extends State<PostDetailPage> {
                 )
               : const SizedBox.shrink(),
         ),
-        // 底部输入区（带展开/收起动画）
-        _buildInputBar(b),
+        // 底部输入框（分割线 + 内容自适应；增高时向上增长，评论区 Expanded 自动让位）
+        _buildInputBar(b, panelW),
       ],
     );
   }
 
   /// 评论区列表（正文作为列表顶部 item，随评论一起滚动）
-  Widget _buildCommentList(Brightness b) {
+  Widget _buildCommentList(Brightness b, double panelW) {
     return SilkyListView(
       controller: _commentScrollCtrl,
       padding: const EdgeInsets.only(bottom: 8),
@@ -890,23 +952,25 @@ class _PostDetailPageState extends State<PostDetailPage> {
       silkyScrollDuration: const Duration(milliseconds: 600),
       animationCurve: Curves.easeOutCubic,
       children: [
-        // ===== 帖子内容区 =====
-        _buildPostHeader(b),
-        _buildPostContent(b),
+        // ===== 帖子内容区（聊天气泡：头像左右按本人/他人切换，气泡包昵称+正文+时间） =====
+        _limitW(panelW, _buildPostBubble(b)),
         const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              Text(
-                '评论 $_commentTotal',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: textColor(b),
+        _limitW(
+          panelW,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Text(
+                  '评论 $_commentTotal',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: textColor(b),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 4),
@@ -920,11 +984,23 @@ class _PostDetailPageState extends State<PostDetailPage> {
             ),
           )
         else
-          for (final c in _comments)
-            KeyedSubtree(
+          for (var _ci = 0; _ci < _comments.length; _ci++)
+            Builder(builder: (ctx) {
+              final c = _comments[_ci];
+              // 抖音式头像合并：连续同作者且前一条无楼中楼时隐藏头像
+              final prev = _ci > 0 ? _comments[_ci - 1] : null;
+              final prevChildren = ((prev?['children'] as List<dynamic>?) ?? []);
+              final showAvatar = _ci == 0 ||
+                  (prev?['user_id'] as num?)?.toInt() !=
+                      (c['user_id'] as num?)?.toInt() ||
+                  prevChildren.isNotEmpty;
+              return _limitW(
+                panelW,
+                KeyedSubtree(
               key: _commentKeys[c['id']] ??= GlobalKey(),
               child: _CommentItem(
             comment: c,
+            showAvatar: showAvatar,
             childShowCount: _childShowCount[c['id']] ?? _childDefaultShow,
             currentUserId: widget.currentUserId,
             onReply: () => _startReply(
@@ -966,25 +1042,40 @@ class _PostDetailPageState extends State<PostDetailPage> {
               });
             },
               ),
-            ),
+              ),
+              );
+            }),
         // ===== 加载更多 =====
         if (!_allCommentsLoaded)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Center(
-              child: _loadingComments
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : TextButton(
-                      onPressed: _loadMoreComments,
-                      child: const Text('加载更多评论'),
-                    ),
+          _limitW(
+            panelW,
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Center(
+                child: _loadingComments
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : TextButton(
+                        onPressed: _loadMoreComments,
+                        child: const Text('加载更多评论'),
+                      ),
+              ),
             ),
           ),
       ],
+    );
+  }
+
+  /// 限制内容宽度并水平居中（用于评论区内容项最大宽度约束）
+  Widget _limitW(double panelW, Widget child) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: panelW),
+        child: child,
+      ),
     );
   }
 
@@ -1036,59 +1127,52 @@ class _PostDetailPageState extends State<PostDetailPage> {
     });
   }
 
-  /// 帖子头部：头像 + 昵称 + 时间
-  Widget _buildPostHeader(Brightness b) {
+  /// 帖子聊天气泡：头像左右按本人/他人切换，气泡包昵称 + 正文 + 时间/定位
+  /// 本人：头像在右，无省略号，删除按钮放定位右侧（红字）；他人：头像在左，省略号(举报)
+  Widget _buildPostBubble(Brightness b) {
     final post = _post!;
     final nickname = post['nickname']?.toString() ?? '匿名用户';
     final avatar = post['avatar']?.toString() ?? '';
     final createText = post['create_time_text']?.toString() ?? '';
     final location = post['location']?.toString() ?? '';
+    final content = post['content']?.toString() ?? '';
+    final isMine = (post['user_id'] as num?)?.toInt() == widget.currentUserId;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-      child: Row(
-        children: [
-          _AvatarBox(url: avatar.isEmpty ? null : AppConfig.resolveUrl(avatar),
-              nickname: nickname, size: 36),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  nickname,
-                  style: TextStyle(
+      child: _ChatBubble(
+        isMine: isMine,
+        avatarUrl: avatar.isEmpty ? null : AppConfig.resolveUrl(avatar),
+        nickname: nickname,
+        avatarSize: 36,
+        // 主贴昵称在气泡上方：大小不变、加粗，颜色用文字色（本人与他人一致）
+        nicknameAbove: true,
+        nicknameStyle: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          color: b == Brightness.light ? Colors.black : Colors.white,
+        ),
+        contentWidget: content.isEmpty
+            ? const SizedBox.shrink()
+            : SelectableText.rich(
+                _buildRichText(b, content, stickerSize: 64),
+                // 本人蓝底气泡：选中背景用黑色（默认蓝选中在蓝底上看不清）
+                selectionColor: isMine ? Colors.black : null,
+                style: TextStyle(
                     fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: textColor(b),
-                  ),
-                ),
-                if (createText.isNotEmpty)
-                  Text(
-                    formatTimeWithLocation(createText, location: location),
-                    style: TextStyle(fontSize: 14, color: textFaintColor(b)),
-                  ),
-              ],
-            ),
-          ),
-          _PostMoreButton(
-            isMine: (post['user_id'] as num?)?.toInt() == widget.currentUserId,
-            onDelete: _deletePost,
-            onReport: () => _reportContent(postId: widget.postId),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 帖子正文（全文，含表情包解析）
-  Widget _buildPostContent(Brightness b) {
-    final content = _post?['content']?.toString() ?? '';
-    if (content.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-      child: SelectableText.rich(
-        _buildRichText(b, content, stickerSize: 64),
-        style: TextStyle(fontSize: 16, color: textBodyColor(b), height: 1.7),
+                    color: isMine
+                        ? Colors.white
+                        : (b == Brightness.light ? Colors.black : Colors.white),
+                    height: 1.7),
+              ),
+        timeText: formatTimeWithLocation(createText, location: location),
+        hasLike: false,
+        // 点击主贴气泡：拉起评论（展开底部输入框聚焦）
+        onReply: _expandInput,
+        onDelete: isMine ? _deletePost : null,
+        onReport: !isMine
+            ? () => _reportContent(postId: widget.postId)
+            : null,
       ),
     );
   }
@@ -1097,22 +1181,68 @@ class _PostDetailPageState extends State<PostDetailPage> {
   ///   - 默认态：一行 "说点什么..." 胶囊按钮 + 帖子级点赞/收藏（★）
   ///   - 展开态：两行高输入框（随行数增高，最多 8 行滚动）+ 下排
   ///     左=表情按钮、右=取消+发送；表情面板贴在输入框上方
-  Widget _buildInputBar(Brightness b) {
-    return Container(
-      decoration: BoxDecoration(
-        color: bgColor(b),
-        border: Border(
-          top: BorderSide(color: b == Brightness.dark ? DarkColors.border : LightColors.border),
+  Widget _buildInputBar(Brightness b, double panelW) {
+    // 分割线横跨右侧可用全宽，内容居中并限制在面板宽度内
+    // 左侧 15px 内分割线从右往左渐变消失（避免与折叠按钮占位冲突）
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: bgColor(b),
+            border: Border(
+              top: BorderSide(color: b == Brightness.dark ? DarkColors.border : LightColors.border),
+            ),
+          ),
+          // 评论框出现/收起动画：默认态（一行按钮）与展开态（两行输入框）间平滑过渡
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: panelW),
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(12, 8, 22, 10),
+                child: AnimatedSize(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeInOut,
+                  alignment: Alignment.topCenter,
+                  child: _inputExpanded ? _buildExpandedInput(b) : _buildCollapsedInput(b),
+                ),
+              ),
+            ),
+          ),
         ),
-      ),
-      padding: EdgeInsets.fromLTRB(12, 8, 12, 10),
-      // 评论框出现/收起动画：默认态（一行按钮）与展开态（两行输入框）间平滑过渡
-      child: AnimatedSize(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeInOut,
-        alignment: Alignment.topCenter,
-        child: _inputExpanded ? _buildExpandedInput(b) : _buildCollapsedInput(b),
-      ),
+        // 顶部左右两侧 15px 渐变遮罩：让分割线在两端对称渐变消失（看起来与两边等宽）
+        Positioned(
+          left: 0,
+          top: 0,
+          width: 15,
+          height: 1,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [bgColor(b), bgColor(b).withValues(alpha: 0)],
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          right: 0,
+          top: 0,
+          width: 15,
+          height: 1,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerRight,
+                end: Alignment.centerLeft,
+                colors: [bgColor(b), bgColor(b).withValues(alpha: 0)],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1140,7 +1270,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
             ),
           ),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 12),
         _PostActionButton(
           icon: _postLiked ? Icons.favorite : Icons.favorite_border,
           iconColor: _postLiked ? kDanger : textMutedColor(b),
@@ -1171,9 +1301,9 @@ class _PostDetailPageState extends State<PostDetailPage> {
         TextField(
           controller: _inputCtrl,
           focusNode: _inputFocus,
-          maxLength: 500,
+          maxLength: 2000, // 2000 字限制
           minLines: 2,
-          maxLines: 8,
+          maxLines: 6, // 超过 6 行内部滚动，不再增高
           style: TextStyle(fontSize: 13, color: textColor(b), height: 1.5),
           decoration: InputDecoration(
             hintText: _replyTarget != null
@@ -1318,213 +1448,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
   }
 }
 
-/// 主贴省略号按钮：自己的帖子=删除，别人的=举报（浮动小菜单）
-class _PostMoreButton extends StatelessWidget {
-  final bool isMine;
-  final VoidCallback onDelete;
-  final VoidCallback onReport;
-
-  const _PostMoreButton({
-    required this.isMine,
-    required this.onDelete,
-    required this.onReport,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final b = Theme.of(context).brightness;
-    return _MoreButton(
-      iconSize: 20,
-      isMine: isMine,
-      onDelete: onDelete,
-      onReport: onReport,
-      iconColor: textFaintColor(b),
-    );
-  }
-}
-
-/// 评论/楼中楼省略号按钮：自己的=删除，别人的=举报（浮动小菜单）
-class _CommentMoreButton extends StatelessWidget {
-  final bool isMine;
-  final double iconSize;
-  final VoidCallback onDelete;
-  final VoidCallback onReport;
-
-  const _CommentMoreButton({
-    required this.isMine,
-    required this.onDelete,
-    required this.onReport,
-    this.iconSize = 16,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final b = Theme.of(context).brightness;
-    return _MoreButton(
-      iconSize: iconSize,
-      isMine: isMine,
-      onDelete: onDelete,
-      onReport: onReport,
-      iconColor: textFaintColor(b),
-    );
-  }
-}
-
 /// 通用省略号按钮：点击弹出浮动小菜单（删除 / 举报）
-class _MoreButton extends StatelessWidget {
-  final double iconSize;
-  final bool isMine;
-  final VoidCallback onDelete;
-  final VoidCallback onReport;
-  final Color iconColor;
-
-  const _MoreButton({
-    required this.iconSize,
-    required this.isMine,
-    required this.onDelete,
-    required this.onReport,
-    required this.iconColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final b = Theme.of(context).brightness;
-    return PopupMenuButton<String>(
-      tooltip: '更多',
-      position: PopupMenuPosition.under,
-      color: bgColor(b),
-      onSelected: (v) {
-        if (v == 'delete') {
-          onDelete();
-        } else if (v == 'report') {
-          onReport();
-        }
-      },
-      itemBuilder: (ctx) => isMine
-          ? [
-              PopupMenuItem(
-                value: 'delete',
-                height: 30,
-                padding: EdgeInsets.zero,
-                // 撑满菜单项宽度让文字居中
-                child: SizedBox(
-                  width: 72,
-                  child: const Text('删除',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: kDanger)),
-                ),
-              ),
-            ]
-          : [
-              PopupMenuItem(
-                value: 'report',
-                height: 30,
-                padding: EdgeInsets.zero,
-                child: const SizedBox(
-                  width: 72,
-                  child: Text('举报',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12)),
-                ),
-              ),
-            ],
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click, // 悬停显示手指
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-          child: Icon(Icons.more_horiz, size: iconSize, color: iconColor),
-        ),
-      ),
-    );
-  }
-}
-
-/// 可回复区域：鼠标悬停/按下时显示次色调胶囊背景，文字不变色。
-///
-/// [builder] 接收交互状态（isHover / isPressed），用于决定是否叠加
-/// "回复"文字变蓝等细粒度反馈；评论主体文字保持原色。
-/// 评论内容区：仅承载"鼠标悬停显示次色调胶囊背景"的视觉反馈动画，
-/// 本身不响应点击，发起回复必须点"回复"文字按钮（[_ReplyTextButton]）。
-class _ReplyArea extends StatefulWidget {
-  final Widget Function(bool hovered) builder;
-
-  const _ReplyArea({required this.builder});
-
-  @override
-  State<_ReplyArea> createState() => _ReplyAreaState();
-}
-
-class _ReplyAreaState extends State<_ReplyArea> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final b = Theme.of(context).brightness;
-    // 用"目标色 alpha=0"代替 Colors.transparent：
-    // Colors.transparent 是全透明黑（RGB=0），动画中间帧会叠出半透明黑 → hover 时先闪一帧很暗
-    final hoverBg = bgHoverColor(b);
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      // 悬停时胶囊背景平滑显现/消失（仅 alpha 渐变，RGB 恒定 → 不变暗）
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: _hovered ? hoverBg : hoverBg.withValues(alpha: 0),
-          borderRadius: BorderRadius.circular(kRadiusMd),
-        ),
-        child: widget.builder(_hovered),
-      ),
-    );
-  }
-}
-
-/// "回复"文字：仅当鼠标悬停到文字本身时才变蓝
-class _ReplyTextButton extends StatefulWidget {
-  final VoidCallback onTap;
-  final double fontSize;
-
-  const _ReplyTextButton({required this.onTap, this.fontSize = 11});
-
-  @override
-  State<_ReplyTextButton> createState() => _ReplyTextButtonState();
-}
-
-class _ReplyTextButtonState extends State<_ReplyTextButton> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final b = Theme.of(context).brightness;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
-        onTap: widget.onTap,
-        child: Text(
-          '回复',
-          style: TextStyle(
-            fontSize: widget.fontSize,
-            color: _pressed
-                ? const Color(0xFF0A6BD1)
-                : (_hovered ? const Color(0xFF7AB8FF) : textMutedColor(b)),
-            fontWeight:
-                (_hovered || _pressed) ? FontWeight.w600 : FontWeight.w400,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// 单条顶层评论（含楼中楼）
 class _CommentItem extends StatelessWidget {
   static const int _childExpandStep = 5; // 每次点"展开更多"增加的条数（与 state 侧同步）
@@ -1540,6 +1464,9 @@ class _CommentItem extends StatelessWidget {
   final ValueChanged<int> onReportComment;
   final VoidCallback onExpandMore;
 
+  /// 是否显示本条顶层评论头像（连续同作者合并）
+  final bool showAvatar;
+
   const _CommentItem({
     required this.comment,
     required this.childShowCount,
@@ -1551,6 +1478,7 @@ class _CommentItem extends StatelessWidget {
     required this.onDeleteComment,
     required this.onReportComment,
     required this.onExpandMore,
+    this.showAvatar = true,
   });
 
   @override
@@ -1571,118 +1499,102 @@ class _CommentItem extends StatelessWidget {
         ((comment['children'] as List<dynamic>?) ?? [])
             .map((e) => (e as Map<String, dynamic>?) ?? {})
             .toList();
+    final isMine = (comment['user_id'] as num?)?.toInt() == currentUserId;
     final showCount =
         childShowCount > children.length ? children.length : childShowCount;
     final hidden = children.length - showCount;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 头像独立左列（不参与 hover 胶囊、不参与回复点击）
-              _AvatarBox(
-                url: avatar.isEmpty ? null : AppConfig.resolveUrl(avatar),
-                nickname: nickname,
-                size: 32,
+          // 聊天气泡评论（头像左右按本人/他人切换，点气泡回复，爱心跟随头像侧）
+          _ChatBubble(
+            isMine: isMine,
+            avatarUrl: avatar.isEmpty ? null : AppConfig.resolveUrl(avatar),
+            nickname: nickname,
+            contentWidget: SelectableText.rich(
+              _buildRichText(
+                b,
+                content,
+                color: isMine
+                    ? Colors.white
+                    : (b == Brightness.light ? Colors.black : Colors.white),
               ),
-              const SizedBox(width: 8),
-              // 右侧：昵称(同行右"...") / 内容 / 时间 / 回复·点赞
-              Expanded(
-                child: _ReplyArea(
-                  builder: (_) => Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // 昵称 + 右侧"..."菜单
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              nickname,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: textMutedColor(b),
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          // 右侧"..."（更多菜单：自己的=删除，别人的=举报）
-                          _CommentMoreButton(
-                            isMine: (comment['user_id'] as num?)?.toInt() ==
-                                currentUserId,
-                            onDelete: () => onDeleteComment(
-                                (comment['id'] as num?)?.toInt() ?? 0),
-                            onReport: () => onReportComment(
-                                (comment['id'] as num?)?.toInt() ?? 0),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      // 顶层评论内容（支持表情包）
-                      SelectableText.rich(
-                        _buildRichText(b, content),
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: textBodyColor(b),
-                          height: 1.6,
-                        ),
-                      ),
-                      // 评论图片（可点击放大 + 下载）
-                      if (_commentImages.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        _buildCommentImages(context, b, _commentImages),
-                      ],
-                      const SizedBox(height: 6),
-                      // 时间（在点赞·回复 上面一行）
-                      Text(formatTimeWithLocation(timeText, location: location),
-                          style: TextStyle(
-                              fontSize: 14, color: textFaintColor(b))),
-                      // 点赞·回复 同一行
-                      Row(
-                        children: [
-                          _ReplyTextButton(onTap: onReply, fontSize: 14),
-                          const Spacer(),
-                          _CommentLikeButton(
-                            isLiked: isLiked,
-                            count: likeCount,
-                            onTap: onLike,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+              // 本人蓝底气泡：选中背景用黑色
+              selectionColor: isMine ? Colors.black : null,
+              style: TextStyle(
+                fontSize: 16,
+                color: isMine
+                    ? Colors.white
+                    : (b == Brightness.light ? Colors.black : Colors.white),
+                height: 1.6,
               ),
-            ],
+            ),
+            imagesWidget: _commentImages.isNotEmpty
+                ? _buildCommentImages(context, b, _commentImages)
+                : null,
+            timeText: formatTimeWithLocation(timeText, location: location),
+            hasLike: true,
+            isLiked: isLiked,
+            likeCount: likeCount,
+            onLike: onLike,
+            onReply: onReply,
+            onDelete: isMine
+                ? () => onDeleteComment((comment['id'] as num?)?.toInt() ?? 0)
+                : null,
+            onReport: !isMine
+                ? () => onReportComment((comment['id'] as num?)?.toInt() ?? 0)
+                : null,
+            showAvatar: showAvatar,
           ),
           // 楼中楼（与主背景同步，不额外加次色调背景）
+          // 左侧用 padding 缩进（保持嵌套视觉），右侧 padding 0 使省略号/爱心与顶层评论右对齐
           if (children.isNotEmpty)
             Container(
-              margin: const EdgeInsets.only(left: 36, top: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.fromLTRB(46, 4, 0, 4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   for (var i = 0; i < showCount && i < children.length; i++)
-                    _buildChild(context, b, children[i]),
+                    Builder(builder: (ctx) {
+                      // 楼中楼内连续同作者合并头像
+                      final prevChild =
+                          i > 0 ? children[i - 1] : null;
+                      final childShowAvatar = i == 0 ||
+                          (prevChild?['user_id'] as num?)?.toInt() !=
+                              (children[i]['user_id'] as num?)?.toInt();
+                      return _buildChild(context, b, children[i],
+                          showAvatar: childShowAvatar);
+                    }),
+                  // 展开按钮：居中显示（用 Row 抵消楼中楼左缩进，使其相对评论项整行居中）
                   if (hidden > 0)
-                    InkWell(
-                      onTap: onExpandMore,
-                      mouseCursor: SystemMouseCursors.click, // 悬停显示手指
-                      borderRadius: BorderRadius.circular(kRadiusSm),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Text(
-                          hidden > _childExpandStep
-                              ? '展开 $_childExpandStep 条回复 ▾'
-                              : '展开全部 $hidden 条回复 ▾',
-                          style: TextStyle(fontSize: 14, color: kPrimary),
+                    Row(
+                      children: [
+                        const SizedBox(width: 46), // 抵消楼中楼容器左缩进，使居中
+                        Expanded(
+                          child: Center(
+                            child: InkWell(
+                              onTap: onExpandMore,
+                              mouseCursor: SystemMouseCursors.click,
+                              borderRadius: BorderRadius.circular(kRadiusSm),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 4),
+                                child: Text(
+                                  hidden > _childExpandStep
+                                      ? '展开 $_childExpandStep 条回复 ▾'
+                                      : '展开全部 $hidden 条回复 ▾',
+                                  style:
+                                      TextStyle(fontSize: 14, color: kPrimary),
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 46),
+                      ],
                     ),
                 ],
               ),
@@ -1695,7 +1607,12 @@ class _CommentItem extends StatelessWidget {
   /// 楼中楼子评论：3 行布局（昵称 / @xxx 内容 / 时间·回复 + 最右点赞）
   ///
   /// @ 规则：回层主（reply_to_uid == 顶层 user_id）无 @，回楼中楼有 @
-  Widget _buildChild(BuildContext context, Brightness b, Map<String, dynamic> child) {
+  Widget _buildChild(
+    BuildContext context,
+    Brightness b,
+    Map<String, dynamic> child, {
+    bool showAvatar = true,
+  }) {
     final replyToName = child['reply_to_name']?.toString() ?? '';
     final content = child['content']?.toString() ?? '';
     final nickname = child['nickname']?.toString() ?? '';
@@ -1712,95 +1629,66 @@ class _CommentItem extends StatelessWidget {
         .toList();
     final childAvatar = child['avatar']?.toString() ?? '';
 
+    final childMine =
+        (child['user_id'] as num?)?.toInt() == currentUserId;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 头像独立左列（小红书风格：头像和昵称/内容/时间不在同一垂直线对齐）
-          _AvatarBox(
-            url: childAvatar.isEmpty ? null : AppConfig.resolveUrl(childAvatar),
-            nickname: nickname,
-            size: 22,
-          ),
-          const SizedBox(width: 6),
-          // 内容列（hover 显示次色调胶囊动画，发起回复只走"回复"文字按钮）
-          Expanded(
-            child: _ReplyArea(
-              builder: (_) => Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 行1：昵称 + 最右侧省略号（自己的=删除，别人的=举报）
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          nickname,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: textMutedColor(b),
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      _CommentMoreButton(
-                        isMine: (child['user_id'] as num?)?.toInt() ==
-                            currentUserId,
-                        iconSize: 14,
-                        onDelete: () => onDeleteComment(
-                            (child['id'] as num?)?.toInt() ?? 0),
-                        onReport: () => onReportComment(
-                            (child['id'] as num?)?.toInt() ?? 0),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  // 行2：@xxx 内容（回层主无 @）
-                  RichText(
-                    text: TextSpan(
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: textBodyColor(b),
-                        height: 1.6,
-                      ),
-                      children: [
-                        if (showAt)
-                          TextSpan(
-                            text: '@$replyToName ',
-                          ),
-                        ..._richSpans(b, content),
-                      ],
-                    ),
-                  ),
-                  // 楼中楼图片（可点击放大 + 下载）
-                  if (childImages.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    _buildCommentImages(context, b, childImages),
-                  ],
-                  const SizedBox(height: 6),
-                  // 时间（在点赞·回复 上面一行）
-                  Text(formatTimeWithLocation(timeText, location: location),
-                      style: TextStyle(
-                          fontSize: 14, color: textFaintColor(b))),
-                  // 点赞·回复 同一行
-                  Row(
-                    children: [
-                      _ReplyTextButton(
-                          onTap: () => onReplyChild(child), fontSize: 14),
-                      const Spacer(),
-                      _CommentLikeButton(
-                        isLiked: isLiked,
-                        count: likeCount,
-                        onTap: () => onLikeChild(child),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+      // 聊天气泡楼中楼评论（头像左右按本人/他人切换，点气泡回复，爱心跟随头像侧）
+      child: _ChatBubble(
+        isMine: childMine,
+        avatarUrl: childAvatar.isEmpty ? null : AppConfig.resolveUrl(childAvatar),
+        nickname: nickname,
+        avatarSize: 26,
+        level: 1, // 楼中楼：气泡样式与顶层区分
+        // 楼中楼昵称在气泡上方：小两号、不加粗、颜色与时间一致（本人与他人一致）
+        nicknameAbove: true,
+        nicknameStyle: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w400,
+          color: textFaintColor(b),
+        ),
+        contentWidget: SelectableText.rich(
+          TextSpan(
+            style: TextStyle(
+              fontSize: 15,
+              color: childMine
+                  ? Colors.white
+                  : (b == Brightness.light ? Colors.black : Colors.white),
+              height: 1.6,
             ),
+            children: [
+              if (showAt)
+                TextSpan(
+                  text: '@$replyToName ',
+                  style: TextStyle(
+                    color: childMine
+                        ? Colors.white.withValues(alpha: 0.85)
+                        : (b == Brightness.light ? Colors.black : Colors.white),
+                  ),
+                ),
+              ..._richSpans(b, content),
+            ],
           ),
-        ],
+          // 本人蓝底气泡：选中背景用黑色
+          selectionColor: childMine ? Colors.black : null,
+        ),
+        imagesWidget: childImages.isNotEmpty
+            ? _buildCommentImages(context, b, childImages)
+            : null,
+        timeText: formatTimeWithLocation(timeText, location: location),
+        hasLike: true,
+        isLiked: isLiked,
+        likeCount: likeCount,
+        onLike: () => onLikeChild(child),
+        onReply: () => onReplyChild(child),
+        onDelete: childMine
+            ? () => onDeleteComment((child['id'] as num?)?.toInt() ?? 0)
+            : null,
+        onReport: !childMine
+            ? () => onReportComment((child['id'] as num?)?.toInt() ?? 0)
+            : null,
+        showAvatar: showAvatar,
       ),
     );
   }
@@ -1843,9 +1731,9 @@ class _CommentItem extends StatelessWidget {
     return [TextSpan(text: text)];
   }
 
-  TextSpan _buildRichText(Brightness b, String text) {
+  TextSpan _buildRichText(Brightness b, String text, {Color? color}) {
     return TextSpan(
-      style: TextStyle(fontSize: 15, color: textBodyColor(b), height: 1.5),
+      style: TextStyle(fontSize: 15, color: color ?? textBodyColor(b), height: 1.5),
       children: _richSpans(b, text),
     );
   }
@@ -1860,40 +1748,85 @@ class _CommentLikeButton extends StatelessWidget {
   final int count;
   final VoidCallback onTap;
 
+  /// 已点赞时图标颜色（默认 kDanger）；null 用默认
+  final Color? activeColor;
+
+  /// 未点赞时图标/数字颜色（默认 textMutedColor）；null 用默认
+  final Color? idleColor;
+
   const _CommentLikeButton({
     required this.isLiked,
     required this.count,
     required this.onTap,
+    this.activeColor,
+    this.idleColor,
   });
 
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
+    final heartColor = isLiked
+        ? (activeColor ?? kDanger)
+        : (idleColor ?? textMutedColor(b));
+    final textColor = isLiked
+        ? (activeColor ?? textMutedColor(b))
+        : (idleColor ?? textMutedColor(b));
     return InkWell(
       onTap: onTap,
       mouseCursor: SystemMouseCursors.click, // 悬停显示手指
       borderRadius: BorderRadius.circular(kRadiusMd),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              isLiked ? Icons.favorite : Icons.favorite_border,
-              size: 15,
-              color: isLiked ? kDanger : textMutedColor(b),
-            ),
-            if (count > 0) ...[
-              const SizedBox(width: 3),
-              Text(
-                '$count',
-                style: TextStyle(fontSize: 11, color: textMutedColor(b)),
+        // 固定宽度容器：右对齐后容器左边缘 x 固定 → 爱心图标（左对齐）在所有评论项中完全垂直对齐，
+        // 点赞数字宽度变化不影响爱心位置
+        child: SizedBox(
+          width: 44,
+          height: 20,
+          child: Row(
+            mainAxisSize: MainAxisSize.max,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // 爱心固定在最左（x 固定）
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: Center(
+                  child: Icon(
+                    isLiked ? Icons.favorite : Icons.favorite_border,
+                    size: 16,
+                    color: heartColor,
+                  ),
+                ),
               ),
+              if (count > 0) ...[
+                const SizedBox(width: 3),
+                // 数字格式化：>=1000 显示 k（如 1k / 1.2k / 10k）
+                Expanded(
+                  child: Text(
+                    _formatCount(count),
+                    maxLines: 1,
+                    overflow: TextOverflow.fade,
+                    softWrap: false,
+                    style: TextStyle(fontSize: 11, color: textColor),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  /// 点赞数格式化：>=1000 用 k（保留1位小数，去末尾0），如 1k / 1.2k / 10k / 1.2k
+  static String _formatCount(int n) {
+    if (n < 1000) return '$n';
+    final v = n / 1000.0;
+    // 整数则不带小数（如 1000 -> 1k，10000 -> 10k）
+    if (v == v.roundToDouble()) return '${v.round()}k';
+    // 带一位小数并去末尾 0（如 1200 -> 1.2k，1300 -> 1.3k）
+    final s = v.toStringAsFixed(1);
+    return '${s.endsWith('.0') ? s.substring(0, s.length - 2) : s}k';
   }
 }
 
@@ -1923,16 +1856,16 @@ class _PostActionButton extends StatelessWidget {
         mouseCursor: SystemMouseCursors.click, // 悬停显示手指
         borderRadius: BorderRadius.circular(kRadiusMd),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 20, color: iconColor),
+              Icon(icon, size: 22, color: iconColor),
               if (count > 0) ...[
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
                 Text(
                   '$count',
-                  style: TextStyle(fontSize: 12, color: textMutedColor(b)),
+                  style: TextStyle(fontSize: 13, color: textMutedColor(b)),
                 ),
               ],
             ],
@@ -2065,6 +1998,422 @@ class _ReportDialogState extends State<_ReportDialog> {
         ),
       ],
     );
+  }
+}
+
+/// 聊天气泡评论组件（抖音/小红书风格）
+///
+/// - 头像位置：本人(isMine)在右侧，他人(他人)在左侧
+/// - 气泡小三角对准头像（头像左→三角朝左；头像右→三角朝右）
+/// - 气泡包裹：昵称 + 内容 + 图片 + 时间/定位 + 省略号(他人)/删除(自己)
+/// - 点击气泡发起回复
+/// - 爱心在气泡外，跟随头像侧（isMine 时爱心被挤压到气泡左侧）
+class _ChatBubble extends StatelessWidget {
+  final bool isMine;
+  final String? avatarUrl;
+  final String nickname;
+  final Widget contentWidget;
+  final Widget? imagesWidget;
+  final String timeText;
+  final bool hasLike;
+  final bool isLiked;
+  final int likeCount;
+  final VoidCallback? onLike;
+  final VoidCallback onReply;
+  final VoidCallback? onDelete; // 自己
+  final VoidCallback? onReport; // 他人
+  final double avatarSize;
+  final bool showNickname;
+
+  /// 层级：0=顶层评论/主贴；1=楼中楼（用于气泡样式区分）
+  final int level;
+
+  /// 是否显示头像（连续同作者评论只显示第一条的头像，抖音式合并）
+  final bool showAvatar;
+
+  /// 昵称是否显示在气泡上方（楼中楼/主贴）；false=昵称在气泡内
+  final bool nicknameAbove;
+
+  /// 气泡上方昵称的样式（楼中楼小两号不加粗；主贴原大小加粗）
+  final TextStyle? nicknameStyle;
+
+  const _ChatBubble({
+    required this.isMine,
+    required this.nickname,
+    required this.contentWidget,
+    required this.timeText,
+    required this.onReply,
+    this.avatarUrl,
+    this.imagesWidget,
+    this.hasLike = false,
+    this.isLiked = false,
+    this.likeCount = 0,
+    this.onLike,
+    this.onDelete,
+    this.onReport,
+    this.avatarSize = 32,
+    this.showNickname = true,
+    this.level = 0,
+    this.showAvatar = true,
+    this.nicknameAbove = false,
+    this.nicknameStyle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // 昵称在气泡内时，头像下移使其垂直中心与昵称对齐；昵称在气泡上方时头像下移 4px
+    final avatarTop =
+        nicknameAbove ? 2.5 : (16 - avatarSize / 2).clamp(0.0, double.infinity);
+    final avatar = Padding(
+      padding: EdgeInsets.only(top: avatarTop),
+      child: _AvatarBox(
+        url: avatarUrl,
+        nickname: nickname,
+        size: avatarSize,
+      ),
+    );
+    // 气泡：点击回复（带按压缩放动画）；右键弹删除/举报菜单（本人=删除，他人=举报）
+    final bubble = _PressableBubble(
+      onTap: onReply,
+      onSecondaryTap: (pos) => _showBubbleMenu(
+        context,
+        pos,
+        isMine: isMine,
+        onDelete: onDelete,
+        onReport: onReport,
+      ),
+      child: _ChatBubbleBody(
+        isMine: isMine,
+        nickname: nickname,
+        contentWidget: contentWidget,
+        imagesWidget: imagesWidget,
+        timeText: timeText,
+        hasLike: hasLike,
+        isLiked: isLiked,
+        likeCount: likeCount,
+        onLike: onLike,
+        onDelete: onDelete,
+        onReport: onReport,
+        // 昵称在气泡上方时，气泡内不显示昵称；头像合并（showAvatar=false）时也隐藏
+        showNickname: showNickname && showAvatar && !nicknameAbove,
+        avatarSize: avatarSize,
+        level: level,
+      ),
+    );
+
+    // 主体行：isMine -> [气泡, 头像] ；他人 -> [头像, 气泡]
+    // showAvatar=false（连续同作者合并）时用占位宽度替代头像，保持气泡对齐
+    // 本人气泡左缩进到头像右侧（左边缘与他人气泡对齐），且按内容宽不撑满
+    final mainRow = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!isMine) ...[
+          if (showAvatar) avatar else SizedBox(width: avatarSize),
+          const SizedBox(width: 8),
+        ],
+        Expanded(
+          child: isMine
+              ? Padding(
+                  padding: EdgeInsets.only(left: avatarSize + 8),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: bubble,
+                  ),
+                )
+              : bubble,
+        ),
+        if (isMine) ...[
+          const SizedBox(width: 8),
+          if (showAvatar) avatar else SizedBox(width: avatarSize),
+        ],
+      ],
+    );
+
+    // 昵称在气泡上方：头像与昵称同一行（顶部对齐），气泡在昵称下方
+    if (nicknameAbove) {
+      final b = Theme.of(context).brightness;
+      final nameLine = Text(
+        nickname,
+        overflow: TextOverflow.ellipsis,
+        style: nicknameStyle ??
+            TextStyle(fontSize: 14, color: textMutedColor(b)),
+      );
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 头像（顶部与昵称对齐；合并时占位）
+          if (!isMine) ...[
+            if (showAvatar) avatar else SizedBox(width: avatarSize),
+            const SizedBox(width: 8),
+          ],
+          // 昵称 + 气泡（昵称在气泡上方；本人昵称右对齐、气泡左缩进对齐他人，合并时昵称隐藏）
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showAvatar)
+                  isMine
+                      ? Align(
+                          alignment: Alignment.centerRight,
+                          child: nameLine,
+                        )
+                      : nameLine
+                else
+                  const SizedBox.shrink(),
+                if (showAvatar) const SizedBox(height: 4),
+                isMine
+                    ? Padding(
+                        padding: EdgeInsets.only(left: avatarSize + 8),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: bubble,
+                        ),
+                      )
+                    : bubble,
+              ],
+            ),
+          ),
+          if (isMine) ...[
+            const SizedBox(width: 8),
+            if (showAvatar) avatar else SizedBox(width: avatarSize),
+          ],
+        ],
+      );
+    }
+    return mainRow;
+  }
+
+  /// 右键气泡弹出菜单：本人=删除，他人=举报
+  void _showBubbleMenu(
+    BuildContext context,
+    Offset globalPosition, {
+    required bool isMine,
+    VoidCallback? onDelete,
+    VoidCallback? onReport,
+  }) {
+    final b = Theme.of(context).brightness;
+    final items = <PopupMenuEntry<VoidCallback?>>[
+      if (isMine)
+        PopupMenuItem<VoidCallback?>(
+          value: onDelete,
+          height: 36,
+          child: const Row(
+            children: [
+              Icon(Icons.delete_outline_rounded, size: 18, color: kDanger),
+              SizedBox(width: 10),
+              Text('删除', style: TextStyle(color: kDanger, fontSize: 13)),
+            ],
+          ),
+        )
+      else
+        PopupMenuItem<VoidCallback?>(
+          value: onReport,
+          height: 36,
+          child: const Row(
+            children: [
+              Icon(Icons.flag_outlined, size: 18),
+              SizedBox(width: 10),
+              Text('举报', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+    ];
+    showMenu<VoidCallback?>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        globalPosition.dx,
+        globalPosition.dy,
+      ),
+      color: bgColor(b),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kRadiusBtn)),
+      items: items,
+    ).then((cb) => cb?.call());
+  }
+}
+
+/// 可按压气泡：按下时轻微缩放动画，左键点击触发回复，右键触发菜单
+class _PressableBubble extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onTap;
+  final void Function(Offset globalPosition) onSecondaryTap;
+
+  const _PressableBubble({
+    required this.child,
+    required this.onTap,
+    required this.onSecondaryTap,
+  });
+
+  @override
+  State<_PressableBubble> createState() => _PressableBubbleState();
+}
+
+class _PressableBubbleState extends State<_PressableBubble> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedScale(
+      scale: _pressed ? 0.97 : 1.0,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+      child: MouseRegion(
+        // 气泡整体 hover 显示小手（内容文本区域由 SelectableText 显示 I-beam，优先级更高）
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (_) => setState(() => _pressed = true),
+          onTapUp: (_) => setState(() => _pressed = false),
+          onTapCancel: () => setState(() => _pressed = false),
+          onTap: widget.onTap,
+          onSecondaryTapDown: (d) => widget.onSecondaryTap(d.globalPosition),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
+/// 气泡本体：昵称 + 内容 + 图片 + 时间/定位 + 点赞（同排）
+/// 本人气泡 = 蓝色底 + 白色文字；他人气泡 = 次色调底 + 主题文字色
+/// 无删除按钮/省略号：删除(本人)/举报(他人)统一走「右键气泡」弹出
+class _ChatBubbleBody extends StatelessWidget {
+  final bool isMine;
+  final String nickname;
+  final Widget contentWidget;
+  final Widget? imagesWidget;
+  final String timeText;
+  final bool hasLike;
+  final bool isLiked;
+  final int likeCount;
+  final VoidCallback? onLike;
+  final VoidCallback? onDelete;
+  final VoidCallback? onReport;
+  final bool showNickname;
+  final double avatarSize;
+  final int level;
+
+  const _ChatBubbleBody({
+    required this.isMine,
+    required this.nickname,
+    required this.contentWidget,
+    required this.timeText,
+    required this.imagesWidget,
+    required this.hasLike,
+    required this.isLiked,
+    required this.likeCount,
+    required this.onLike,
+    required this.onDelete,
+    required this.onReport,
+    required this.showNickname,
+    this.avatarSize = 32,
+    this.level = 0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final b = Theme.of(context).brightness;
+    // 本人气泡：蓝色底 + 白字。
+    // 他人气泡：白天顶层与楼中楼同色（次色调）；夜晚顶层与楼中楼也同色（更深一档）
+    final bubbleBg = isMine
+        ? kPrimary
+        : (b == Brightness.light ? bgSoftColor(b) : bgHoverColor(b));
+    // 他人气泡文字：白天纯黑 / 夜晚纯白；本人气泡文字：白色
+    final bubbleTextColor = isMine
+        ? Colors.white
+        : (b == Brightness.light ? Colors.black : Colors.white);
+    final nicknameColor = isMine
+        ? Colors.white.withValues(alpha: 0.92)
+        : bubbleTextColor;
+    final timeColor = isMine
+        ? Colors.white.withValues(alpha: 0.72)
+        : bubbleTextColor.withValues(alpha: 0.85);
+    final likeColor = isMine
+        ? (isLiked ? Colors.white : Colors.white.withValues(alpha: 0.85))
+        : (isLiked ? kDanger : bubbleTextColor);
+
+    // 无投影、无边框的纯色圆角气泡
+    final bubble = CustomPaint(
+      painter: _ChatBubblePainter(bg: bubbleBg),
+      child: Padding(
+        // 楼中楼他人气泡左侧加大内边距，避免内容紧贴气泡边缘
+        padding: EdgeInsets.fromLTRB(
+          (!isMine && level > 0) ? 16 : 12,
+          8,
+          12,
+          8,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 昵称行（无省略号；删除/举报走右键气泡）
+            if (showNickname)
+              Text(
+                nickname,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: nicknameColor,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            if (showNickname) const SizedBox(height: 4),
+            contentWidget,
+            if (imagesWidget != null) ...[
+              const SizedBox(height: 6),
+              imagesWidget!,
+            ],
+            const SizedBox(height: 6),
+            // 时间/定位 + 点赞 同一行（无删除按钮）
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    timeText,
+                    style: TextStyle(fontSize: 13, color: timeColor),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (hasLike)
+                  _CommentLikeButton(
+                    isLiked: isLiked,
+                    count: likeCount,
+                    onTap: onLike ?? () {},
+                    activeColor: isLiked ? (isMine ? Colors.white : kDanger) : null,
+                    idleColor: likeColor,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    return bubble;
+  }
+}
+
+/// 气泡背景绘制：圆角矩形（无小三角、无边框、无投影）
+class _ChatBubblePainter extends CustomPainter {
+  final Color bg; // 气泡底色（本人=蓝，他人=次色调）
+
+  _ChatBubblePainter({required this.bg});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const radius = 12.0;
+    final fill = Paint()..color = bg;
+    final bodyRect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final bodyPath = Path()
+      ..addRRect(RRect.fromRectAndRadius(bodyRect, const Radius.circular(radius)));
+    canvas.drawPath(bodyPath, fill);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ChatBubblePainter old) {
+    return old.bg != bg;
   }
 }
 
