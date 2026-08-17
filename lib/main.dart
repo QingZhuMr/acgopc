@@ -5,11 +5,9 @@
 //   2. flutter create .     （补齐 Windows 平台编译文件，已执行）
 //   3. flutter run -d windows
 //
-// 本 Demo 演示了：
 //   - Windows 桌面窗口 + 左侧导航 + 右侧内容区的基本布局
 //   - 无边框的左右分区：导航栏(副区块 #F5F7FA/#1E1E23) + 内容页(标准色 #FFF/#23232A)
 //   - 白天 / 黑夜 / 跟随系统 三套主题
-//   - 三个示例页面（首页 / 用户 / 设置）
 //
 // 字体：Segoe UI Variable + 中文回退微软雅黑，颜色统一取自 app_theme.dart。
 
@@ -1870,6 +1868,17 @@ class _ProfileViewState extends State<_ProfileView> {
     return raw.toString();
   }
 
+  // ===== 个人中心 tab：0=动态，1=收藏 =====
+  int _profileTab = 0;
+
+  // ===== 我的动态（只显示我发布的帖子） =====
+  final List<Map<String, dynamic>> _myPosts = [];
+  int _myPage = 1;
+  bool _myLoading = false;
+  bool _myLoadingMore = false;
+  bool _myAllLoaded = false;
+  bool _myLoadFailed = false;
+
   // ===== 我的收藏 =====
   final List<Map<String, dynamic>> _favorites = [];
   int _favPage = 1;
@@ -1890,17 +1899,17 @@ class _ProfileViewState extends State<_ProfileView> {
     super.initState();
     // 监听钱包余额推送（充值到账后 WS 实时刷新熊爪余额）
     WsService.instance.onWallet = _onWalletPushed;
-    // 加载我的收藏列表（首次进入个人中心）
-    if (widget.active) _loadFavorites();
+    // 加载当前 tab 数据（首次进入个人中心，默认「动态」）
+    if (widget.active) _loadProfileData();
   }
 
   @override
   void didUpdateWidget(covariant _ProfileView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 从其他 tab 切回个人中心（active 由 false → true）时刷新收藏列表，
-    // 保证「广场里收藏/取消收藏」后切回来能看到最新数据（按需拉取，无轮询开销）。
+    // 从其他 tab 切回个人中心（active 由 false → true）时刷新当前 tab 数据，
+    // 保证「广场里发帖/收藏」后切回来能看到最新数据（按需拉取，无轮询开销）。
     if (widget.active && !oldWidget.active) {
-      _loadFavorites();
+      _loadProfileData();
     }
   }
 
@@ -1955,7 +1964,11 @@ class _ProfileViewState extends State<_ProfileView> {
           return NotificationListener<ScrollNotification>(
             onNotification: (n) {
               if (n.metrics.pixels >= n.metrics.maxScrollExtent - 200) {
-                _loadMoreFavorites();
+                if (_profileTab == 0) {
+                  _loadMoreMyPosts();
+                } else {
+                  _loadMoreFavorites();
+                }
               }
               return false;
             },
@@ -2077,53 +2090,88 @@ class _ProfileViewState extends State<_ProfileView> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  // ===== 我的收藏（小红书/抖音风格双列瀑布流） =====
+                  // ===== 个人中心 tab：动态 / 收藏（胶囊切换） =====
                   Padding(
                     padding: const EdgeInsets.only(left: 2, bottom: 12),
                     child: Row(
                       children: [
-                        // Icon(Icons.bookmark_border,
-                        //     size: 18, color: kPrimary),
-                        // const SizedBox(width: 6),
-                        Text('收藏',
-                            style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: textColor(b))),
-                        const SizedBox(width: 8),
-                        if (_favorites.isNotEmpty)
-                          Text('${_favorites.length}',
-                              style: TextStyle(
-                                  fontSize: 13, color: textMutedColor(b))),
+                        _ProfileTab(
+                          label: '动态',
+                          count: _myPosts.length,
+                          selected: _profileTab == 0,
+                          onTap: () => _switchTab(0),
+                        ),
+                        const SizedBox(width: 4),
+                        _ProfileTab(
+                          label: '收藏',
+                          count: _favorites.length,
+                          selected: _profileTab == 1,
+                          onTap: () => _switchTab(1),
+                        ),
                       ],
                     ),
                   ),
-                  // 收藏列表内容：加载中 / 失败重试 / 空态 / 瀑布流
-                  if (_favLoading && _favorites.isEmpty)
-                    const _SkeletonGrid(columns: 3)
-                  else if (_favLoadFailed && _favorites.isEmpty)
-                    _FavRetry(onRetry: _loadFavorites)
-                  else if (_favorites.isEmpty)
-                    _EmptyFavorites(b: b)
-                  else
-                    _MasonryGrid(
-                      posts: _favorites,
-                      columns: _favColumns(constraints.maxWidth),
-                      coverHeight: _favCoverHeight,
-                      onPostTap: (p) => _openFavPost(p),
-                    ),
-                  if (_favLoadingMore)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Center(
-                        child: SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2)),
+                  // ===== 我的动态（只显示我发布的帖子，瀑布流样式同收藏） =====
+                  if (_profileTab == 0) ...[
+                    if (_myLoading && _myPosts.isEmpty)
+                      const _SkeletonGrid(columns: 3)
+                    else if (_myLoadFailed && _myPosts.isEmpty)
+                      _FavRetry(label: '动态加载失败', onRetry: _loadMyPosts)
+                    else if (_myPosts.isEmpty)
+                      _EmptyFavorites(
+                        b: b,
+                        icon: Icons.dynamic_feed_outlined,
+                        title: '还没有发布任何动态',
+                        subtitle: '去广场点击发帖，分享你的生活吧',
+                      )
+                    else
+                      _MasonryGrid(
+                        posts: _myPosts,
+                        columns: _favColumns(constraints.maxWidth),
+                        coverHeight: _favCoverHeight,
+                        onPostTap: (p) => _openMyPost(p),
                       ),
-                    )
-                  else if (!_favAllLoaded && _favorites.isNotEmpty)
-                    const SizedBox(height: 24),
+                    if (_myLoadingMore)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Center(
+                          child: SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2)),
+                        ),
+                      )
+                    else if (!_myAllLoaded && _myPosts.isNotEmpty)
+                      const SizedBox(height: 24),
+                  ]
+                  // ===== 我的收藏（小红书/抖音风格双列瀑布流） =====
+                  else ...[
+                    if (_favLoading && _favorites.isEmpty)
+                      const _SkeletonGrid(columns: 3)
+                    else if (_favLoadFailed && _favorites.isEmpty)
+                      _FavRetry(onRetry: _loadFavorites)
+                    else if (_favorites.isEmpty)
+                      _EmptyFavorites(b: b)
+                    else
+                      _MasonryGrid(
+                        posts: _favorites,
+                        columns: _favColumns(constraints.maxWidth),
+                        coverHeight: _favCoverHeight,
+                        onPostTap: (p) => _openFavPost(p),
+                      ),
+                    if (_favLoadingMore)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Center(
+                          child: SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2)),
+                        ),
+                      )
+                    else if (!_favAllLoaded && _favorites.isNotEmpty)
+                      const SizedBox(height: 24),
+                  ],
                   const SizedBox(height: 16),
                 ],
               ),
@@ -2133,6 +2181,119 @@ class _ProfileViewState extends State<_ProfileView> {
         },
       ),
     );
+  }
+
+  // ===== 我的动态 / 收藏：tab 切换与加载 =====
+
+  /// 切换个人中心 tab（0=动态，1=收藏），首次进入该 tab 且无数据时加载
+  void _switchTab(int idx) {
+    if (_profileTab == idx) return;
+    setState(() => _profileTab = idx);
+    if (idx == 0 && _myPosts.isEmpty && !_myLoading && !_myLoadFailed) {
+      _loadMyPosts();
+    } else if (idx == 1 &&
+        _favorites.isEmpty &&
+        !_favLoading &&
+        !_favLoadFailed) {
+      _loadFavorites();
+    }
+  }
+
+  /// 加载当前 tab 数据（进入个人中心 / 从其他 tab 切回时调用）
+  void _loadProfileData() {
+    if (_profileTab == 0) {
+      _loadMyPosts();
+    } else {
+      _loadFavorites();
+    }
+  }
+
+  // ===== 我的动态：加载 =====
+
+  /// 加载我的动态第一页
+  Future<void> _loadMyPosts() async {
+    if (_myLoading) return;
+    setState(() {
+      _myLoading = true;
+      _myLoadFailed = false;
+      _myPage = 1;
+    });
+    if (!mounted) return;
+    try {
+      final resp = await ApiClient.instance
+          .getMyPosts(page: 1, pageSize: 12)
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (resp.statusCode == 200 && json['code'] == 0) {
+        final list = ((json['data'] ?? {})['list'] ?? []) as List;
+        setState(() {
+          _myPosts.clear();
+          _myPosts.addAll(list.map((e) => Map<String, dynamic>.from(e)));
+          _myPage = 1;
+          _myAllLoaded = list.length < 12;
+          _myLoading = false;
+        });
+      } else {
+        setState(() {
+          _myLoading = false;
+          _myLoadFailed = true;
+        });
+      }
+    } catch (_) {
+      setState(() {
+        _myLoading = false;
+        _myLoadFailed = true;
+      });
+    }
+  }
+
+  /// 加载更多动态（触底自动加载）
+  Future<void> _loadMoreMyPosts() async {
+    if (_myLoading || _myLoadingMore || _myAllLoaded || _myPosts.isEmpty) {
+      return;
+    }
+    setState(() => _myLoadingMore = true);
+    try {
+      final resp = await ApiClient.instance
+          .getMyPosts(page: _myPage + 1, pageSize: 12)
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (resp.statusCode == 200 && json['code'] == 0) {
+        final list = ((json['data'] ?? {})['list'] ?? []) as List;
+        setState(() {
+          _myPage++;
+          _myPosts.addAll(list.map((e) => Map<String, dynamic>.from(e)));
+          _myAllLoaded = list.length < 12;
+          _myLoadingMore = false;
+        });
+      } else {
+        setState(() => _myLoadingMore = false);
+      }
+    } catch (_) {
+      setState(() => _myLoadingMore = false);
+    }
+  }
+
+  /// 点击动态卡片 → 打开帖子详情
+  Future<void> _openMyPost(Map<String, dynamic> p) async {
+    final id = (p['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return;
+    // 双端统一：在内容区打开帖子详情（保留左侧导航栏，不遮盖）
+    if (_HomePageState.current?.mounted == true) {
+      _HomePageState.current!.openPostFullInContent(p, id);
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PostDetailPage(
+          postBrief: p,
+          postId: id,
+          currentUserId: (_user['id'] as num?)?.toInt() ?? 0,
+        ),
+      ),
+    );
+    // 从详情页返回后刷新动态列表（点赞状态可能变化）
+    _loadMyPosts();
   }
 
   // ===== 我的收藏：加载 =====
@@ -2602,10 +2763,67 @@ class _ProfileViewState extends State<_ProfileView> {
   }
 }
 
-/// 我的收藏：加载失败重试
+/// 个人中心顶部 tab（动态 / 收藏）胶囊切换按钮
+class _ProfileTab extends StatelessWidget {
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+  const _ProfileTab({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final b = Theme.of(context).brightness;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          decoration: BoxDecoration(
+            color: selected ? primarySoftColor(b) : Colors.transparent,
+            borderRadius: BorderRadius.circular(kRadiusBtn),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  color: selected ? kPrimary : textSecondaryColor(b),
+                ),
+              ),
+              if (count > 0) ...[
+                const SizedBox(width: 6),
+                Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: selected ? kPrimary : textMutedColor(b),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 我的收藏 / 我的动态：加载失败重试
 class _FavRetry extends StatelessWidget {
   final VoidCallback onRetry;
-  const _FavRetry({required this.onRetry});
+  final String label;
+  const _FavRetry({required this.onRetry, this.label = '收藏加载失败'});
 
   @override
   Widget build(BuildContext context) {
@@ -2618,7 +2836,7 @@ class _FavRetry extends StatelessWidget {
           children: [
             Icon(Icons.cloud_off, size: 42, color: textMutedColor(b)),
             const SizedBox(height: 12),
-            Text('收藏加载失败',
+            Text(label,
                 style: TextStyle(fontSize: 14, color: textMutedColor(b))),
             const SizedBox(height: 16),
             OutlinedButton.icon(
@@ -2639,10 +2857,18 @@ class _FavRetry extends StatelessWidget {
   }
 }
 
-/// 我的收藏：空态（暂无收藏）
+/// 我的收藏 / 我的动态：空态（可自定义图标 / 文案）
 class _EmptyFavorites extends StatelessWidget {
   final Brightness b;
-  const _EmptyFavorites({required this.b});
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  const _EmptyFavorites({
+    required this.b,
+    this.icon = Icons.bookmark_border,
+    this.title = '还没有收藏任何动态',
+    this.subtitle = '去广场逛逛，看到喜欢的内容点个收藏吧',
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2655,12 +2881,12 @@ class _EmptyFavorites extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.bookmark_border, size: 40, color: textMutedColor(b)),
+          Icon(icon, size: 40, color: textMutedColor(b)),
           const SizedBox(height: 12),
-          Text('还没有收藏任何动态',
+          Text(title,
               style: TextStyle(fontSize: 14, color: textMutedColor(b))),
           const SizedBox(height: 6),
-          Text('去广场逛逛，看到喜欢的内容点个收藏吧',
+          Text(subtitle,
               style: TextStyle(fontSize: 12, color: textMutedColor(b))),
         ],
       ),

@@ -86,6 +86,8 @@ class _PostDetailPageState extends State<PostDetailPage> {
   // 评论数据
   final List<Map<String, dynamic>> _comments = [];
   int _commentTotal = 0;
+  // 顶层评论总数（分页基于顶层评论；楼中楼挂载在顶层评论 children 里，不参与分页）
+  int _topTotal = 0;
   int _page = 1;
   bool _loadingComments = false;
   bool _allCommentsLoaded = false;
@@ -190,8 +192,11 @@ class _PostDetailPageState extends State<PostDetailPage> {
           ..clear()
           ..addAll(list.map((e) => (e as Map<String, dynamic>?) ?? {}));
         _commentTotal = (data['comment_total'] as num?)?.toInt() ?? 0;
+        // 顶层评论总数用于判断是否还有更多；兼容旧接口（无该字段时退化为按全部评论数判断）
+        _topTotal =
+            (data['comment_top_total'] as num?)?.toInt() ?? _commentTotal;
         _page = 1;
-        _allCommentsLoaded = _comments.length >= _commentTotal;
+        _allCommentsLoaded = _comments.length >= _topTotal;
         _loading = false;
         _current = 0;
         _pageIndex = _carouselBase;
@@ -228,7 +233,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
         setState(() {
           _comments.addAll(list.map((e) => (e as Map<String, dynamic>?) ?? {}));
           _page += 1;
-          _allCommentsLoaded = _comments.length >= _commentTotal;
+          _allCommentsLoaded = _comments.length >= _topTotal;
         });
       } else {
         _allCommentsLoaded = true;

@@ -329,6 +329,28 @@ class ApiClient {
     );
   }
 
+  /// 我的动态列表（业务接口）：分页返回当前用户发布的帖子（个人中心「动态」tab）
+  ///
+  /// 字段同广场列表：id, user_id, nickname, avatar, content, images[],
+  /// comment_count, like_count, is_liked, is_favorited(恒 false——自己的帖子不能收藏),
+  /// favorite_count, create_time, create_time_text, location
+  Future<http.Response> getMyPosts({
+    int page = 1,
+    int pageSize = 12,
+  }) {
+    final path = '/post/myPosts';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      'page': '$page',
+      'page_size': '$pageSize',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
   /// 评论点赞 / 取消点赞（切换，业务接口）
   ///
   /// 返回：is_liked、like_count
