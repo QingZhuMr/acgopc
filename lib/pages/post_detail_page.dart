@@ -796,7 +796,8 @@ class _PostDetailPageState extends State<PostDetailPage> {
       onEnter: (_) => _setCarouselPaused(true),
       onExit: (_) => _setCarouselPaused(false),
       child: Container(
-      color: b == Brightness.dark ? const Color(0xFF19191E) : const Color(0xFF0F0F12),
+      // 白天模式用白天背景色，夜晚用暗色（放大的背景色不变，仍保持深色）
+      color: b == Brightness.dark ? const Color(0xFF19191E) : bgColor(b),
       child: Stack(
         children: [
           Positioned.fill(
