@@ -233,45 +233,45 @@ class _NotificationPageState extends State<NotificationPage> {
     );
   }
 
-  /// 简洁标题行（macOS 内嵌 tab 用）：无返回按钮/窗口按钮，保留标题 + 未读角标 + 全部已读
+  /// 简洁标题行（侧边栏 tab 内嵌用）：无返回按钮/窗口按钮，保留标题 + 未读角标 + 全部已读
+  /// 间距规范：Win 端标题距顶 5px（比 macOS 的 20 上移 15px）；
+  /// 标题与下一行内容间距 20px（本行 bottom 4 + 内容区自带顶部 padding 16 = 20）；
+  /// 左右边距 24px，与 _PageScaffold（我的/设置页）标题行一致
   Widget _buildEmbeddedBar(Brightness b) {
-    return SizedBox(
-      height: 48,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Row(
-          children: [
-            Text(
-              '通知',
-              style: TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.w600, color: textColor(b)),
-            ),
-            if (_unread > 0)
-              Container(
-                margin: const EdgeInsets.only(left: 8),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                  color: kDanger,
-                  borderRadius: BorderRadius.circular(kRadiusFull),
-                ),
-                child: Text(
-                  '$_unread',
-                  style: const TextStyle(
-                      fontSize: 11,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600),
-                ),
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          24, Platform.isWindows ? 5 : 20, 24, 4),
+      child: Row(
+        children: [
+          Text(
+            '通知',
+            style: TextStyle(
+                fontSize: 20, fontWeight: FontWeight.w600, color: textColor(b)),
+          ),
+          if (_unread > 0)
+            Container(
+              margin: const EdgeInsets.only(left: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: kDanger,
+                borderRadius: BorderRadius.circular(kRadiusFull),
               ),
-            const Spacer(),
-            TextButton.icon(
-              onPressed: _readAll,
-              style: TextButton.styleFrom(foregroundColor: kPrimary),
-              icon: const Icon(Icons.done_all_rounded, size: 16),
-              label: const Text('全部已读', style: TextStyle(fontSize: 13)),
+              child: Text(
+                '$_unread',
+                style: const TextStyle(
+                    fontSize: 11,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600),
+              ),
             ),
-          ],
-        ),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: _readAll,
+            style: TextButton.styleFrom(foregroundColor: kPrimary),
+            icon: const Icon(Icons.done_all_rounded, size: 16),
+            label: const Text('全部已读', style: TextStyle(fontSize: 13)),
+          ),
+        ],
       ),
     );
   }
@@ -293,7 +293,7 @@ class _NotificationPageState extends State<NotificationPage> {
         Text(
           '通知',
           style: TextStyle(
-              fontSize: 16, fontWeight: FontWeight.w600, color: textColor(b)),
+              fontSize: 20, fontWeight: FontWeight.w600, color: textColor(b)),
         ),
         if (_unread > 0)
           Container(
@@ -390,7 +390,8 @@ class _NotificationPageState extends State<NotificationPage> {
       return _buildEmpty(b);
     }
     return SilkyListView.builder(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+      // 顶部 16：配合标题行 bottom 4 构成「标题与下一行间距 20px」规范
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
       scrollSpeed: 1.6,
       silkyScrollDuration: const Duration(milliseconds: 600),
       animationCurve: Curves.easeOutCubic,

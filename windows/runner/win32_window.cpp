@@ -1,5 +1,6 @@
 #include "win32_window.h"
 
+#include <cstdlib>
 #include <dwmapi.h>
 #include <flutter_windows.h>
 
@@ -17,6 +18,11 @@ namespace {
 #endif
 
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
+
+// 注：实心版本。曾尝试用 WS_EX_NOREDIRECTIONBITMAP 直通合成 +
+// DwmSetWindowAttribute(SYSTEMBACKDROP_TYPE) 实现 Win11 Acrylic 磨砂，
+// 但直通合成与 Flutter 引擎渲染冲突，窗口内容整体消失（只剩纯色底），
+// 2026-08-17 最终回退实心，不再启用任何玻璃效果。
 
 /// Registry key for app theme preference.
 ///
@@ -134,8 +140,11 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
-  HWND window = CreateWindow(
-      window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
+  // 实心版本：不使用直通合成（WS_EX_NOREDIRECTIONBITMAP 与 Flutter 渲染冲突，
+  // 会导致窗口内容消失），使用默认重定向位图渲染。
+  constexpr DWORD ex_style = 0;
+  HWND window = CreateWindowEx(
+      ex_style, window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
       Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
       Scale(size.width, scale_factor), Scale(size.height, scale_factor),
       nullptr, nullptr, GetModuleHandle(nullptr), this);

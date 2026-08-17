@@ -30,6 +30,7 @@ import 'core/app_config.dart';
 import 'services/app_service.dart';
 import 'core/app_theme.dart';
 import 'core/device_service.dart';
+import 'core/window_effect.dart';
 import 'pages/login_page.dart';
 import 'pages/maintenance.dart';
 import 'services/notification_center.dart';
@@ -51,6 +52,9 @@ void main() async {
   // 初始化窗口管理器
   await windowManager.ensureInitialized();
 
+  // 初始化窗口玻璃效果原生通道（实心版本为 no-op，保留调用便于将来恢复）
+  await WindowEffectService.initialize();
+
   // 初始化应用服务（单实例 + 关闭驻留）；失败说明已有实例运行
   // 注意：单实例锁必须最先判定，绝不能阻塞或漏判，避免多开
   if (!await AppService.instance.init()) {
@@ -62,6 +66,7 @@ void main() async {
   // 标题栏策略：所有平台都隐藏原生标题栏，由 Flutter 自绘顶栏承担。
   //   - macOS：隐藏原生栏后红黄绿窗口按钮仍显示在左上角，自绘顶栏为其预留安全距离、不绘制窗口按钮
   //   - Windows：隐藏原生栏，自绘顶栏绘制窗口按钮
+  // 实心版本：窗口背景保持默认不透明（不启用任何玻璃效果）。
   final options = WindowOptions(
     size: const Size(1080, 720),
     center: true,
@@ -69,12 +74,16 @@ void main() async {
     // 窗口标题（任务栏 / 菜单栏展示名 = AppConfig.appName）
     title: AppConfig.appName,
     titleBarStyle: TitleBarStyle.hidden,
+    // 窗口背景：不透明（实心版本）
+    backgroundColor: null,
   );
   windowManager.waitUntilReadyToShow(options, () async {
     // 先固定窗口尺寸，避免 show 时出现"瞬间放大又回归"的闪烁
     await windowManager.setMinimumSize(kMinWindowSize);
     await windowManager.setSize(const Size(1080, 720));
     await windowManager.center();
+    // 应用窗口玻璃效果（实心版本为 no-op，须在窗口创建后调用，便于将来恢复）
+    await WindowEffectService.applyEffect();
     await windowManager.show();
     await windowManager.focus();
   });
@@ -480,7 +489,7 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         _NavItem(
-          Icons.person_outline,
+          Icons.person_rounded,
           '我的',
           _ProfileView(
             user: widget.user,
@@ -598,7 +607,7 @@ class _HomePageState extends State<HomePage> {
         ),
         // 导航项（个人中心）
         _MacRailItem(
-          icon: Icons.person_outline,
+          icon: Icons.person_rounded,
           label: '我的',
           selected: _currentIndex == 1,
           brightness: b,
@@ -627,11 +636,22 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// 侧边栏：实心版本，所有平台统一为不透明实心背景
+  Widget _buildSidebar(Brightness b) {
+    final rail = _buildMacRail(b);
+    return Container(
+      width: _effectiveRailWidth,
+      color: bgSoftColor(b),
+      child: rail,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
+    // 实心版本：窗口整体为不透明实心背景，无玻璃效果
     return Scaffold(
-      // 内容页背景标准色
+      // 内容页背景标准色（实心不透明）
       backgroundColor: bgColor(b),
       body: Column(
         children: [
@@ -644,24 +664,23 @@ class _HomePageState extends State<HomePage> {
           Expanded(
             child: Row(
               children: [
-                // 左侧导航栏（副区块背景，无边框，Finder 风格，双端一致）
-                Container(
-                  width: _effectiveRailWidth,
-                  color: bgSoftColor(b),
-                  child: _buildMacRail(b),
-                ),
+                // 左侧导航栏（副区块背景，无边框，Finder 风格，双端一致；实心不透明）
+                _buildSidebar(b),
 
-                // 右侧内容区（无分割线，无边框）
+                // 右侧内容区（无分割线，无边框；实心不透明）
                 Expanded(
-                  child: _macOverlay != null
-                      // macOS 覆盖页（发帖/详情内嵌，保留导航栏）
-                      ? _macOverlay!
-                      : IndexedStack(
-                          index: _currentIndex,
-                          children: [
-                            for (final item in _navItems) item.view,
-                          ],
-                        ),
+                  child: Container(
+                    color: bgColor(b),
+                    child: _macOverlay != null
+                        // macOS 覆盖页（发帖/详情内嵌，保留导航栏）
+                        ? _macOverlay!
+                        : IndexedStack(
+                            index: _currentIndex,
+                            children: [
+                              for (final item in _navItems) item.view,
+                            ],
+                          ),
+                  ),
                 ),
               ],
             ),
@@ -710,7 +729,7 @@ class _MacRailItem extends StatelessWidget {
                   Icon(
                     icon,
                     size: 20,
-                    color: selected ? kPrimary : textMutedColor(brightness),
+                    color: selected ? kPrimary : textColor(brightness),
                   ),
                   if (badge > 0)
                     Positioned(
@@ -740,8 +759,8 @@ class _MacRailItem extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                    color: selected ? textColor(brightness) : textMutedColor(brightness),
+                    fontWeight: FontWeight.w400,
+                    color: selected ? kPrimary : textColor(brightness),
                   ),
                 ),
               ),
@@ -1866,6 +1885,13 @@ class _ProfileViewState extends State<_ProfileView> {
   bool _favAllLoaded = false;
   bool _favLoadFailed = false;
 
+  // ===== 对话框加载态 =====
+  /// 编辑资料保存中
+  bool _savingProfile = false;
+
+  /// 更改密码提交中
+  bool _savingPwd = false;
+
   @override
   void initState() {
     super.initState();
@@ -1905,7 +1931,7 @@ class _ProfileViewState extends State<_ProfileView> {
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
     return _PageScaffold(
-      title: '个人中心',
+      title: '我的',
       actions: [
         // 右上角省略号：更多操作（更改密码 / 退出账户）
         PopupMenuButton<String>(
@@ -2243,7 +2269,6 @@ class _ProfileViewState extends State<_ProfileView> {
   Future<void> _openEditDialog() async {
     final b = Theme.of(context).brightness;
     final nameCtrl = TextEditingController(text: _nickname);
-    bool uploading = false;
 
     await showDialog(
       context: context,
@@ -2347,8 +2372,10 @@ class _ProfileViewState extends State<_ProfileView> {
                     style: TextStyle(color: textMutedColor(b))),
               ),
               TextButton(
-                onPressed: uploading ? null : () => _saveProfile(ctx, nameCtrl),
-                child: uploading
+                onPressed: _savingProfile
+                    ? null
+                    : () => _saveProfile(ctx, setDialogState, nameCtrl),
+                child: _savingProfile
                     ? const SizedBox(
                         width: 16,
                         height: 16,
@@ -2397,7 +2424,10 @@ class _ProfileViewState extends State<_ProfileView> {
 
   /// 保存资料：若选了新头像先上传，再更新昵称
   Future<void> _saveProfile(
-      BuildContext dialogCtx, TextEditingController nameCtrl) async {
+    BuildContext dialogCtx,
+    StateSetter setDialogState,
+    TextEditingController nameCtrl,
+  ) async {
     final nickname = nameCtrl.text.trim();
     if (nickname.isEmpty) {
       NotifyStack.warning('昵称不能为空');
@@ -2405,7 +2435,7 @@ class _ProfileViewState extends State<_ProfileView> {
     }
 
     // 保存按钮进入加载态
-    setState(() {});
+    setDialogState(() => _savingProfile = true);
 
     try {
       // 1) 若已选择新头像，先上传（直接传裁剪后的 bytes，避免本地临时文件 IO）
@@ -2456,7 +2486,7 @@ class _ProfileViewState extends State<_ProfileView> {
       debugPrint('保存资料失败: $e');
       NotifyStack.warning('保存失败：$e');
     } finally {
-      setState(() {});
+      setState(() => _savingProfile = false);
     }
   }
 
@@ -2466,7 +2496,6 @@ class _ProfileViewState extends State<_ProfileView> {
     final oldCtrl = TextEditingController();
     final newCtrl = TextEditingController();
     final confirmCtrl = TextEditingController();
-    bool saving = false;
 
     await showDialog(
       context: context,
@@ -2511,11 +2540,11 @@ class _ProfileViewState extends State<_ProfileView> {
                     style: TextStyle(color: textMutedColor(b))),
               ),
               TextButton(
-                onPressed: saving
+                onPressed: _savingPwd
                     ? null
                     : () => _savePassword(
                         ctx, setDialogState, oldCtrl, newCtrl, confirmCtrl),
-                child: saving
+                child: _savingPwd
                     ? const SizedBox(
                         width: 16,
                         height: 16,
@@ -2554,7 +2583,7 @@ class _ProfileViewState extends State<_ProfileView> {
       return;
     }
 
-    setDialogState(() {}); // 进入加载态
+    setDialogState(() => _savingPwd = true); // 进入加载态
     try {
       final resp = await ApiClient.instance
           .postChangePassword(
@@ -2574,6 +2603,8 @@ class _ProfileViewState extends State<_ProfileView> {
       widget.onLogout();
     } catch (_) {
       NotifyStack.warning('修改失败，请检查网络');
+    } finally {
+      setDialogState(() => _savingPwd = false);
     }
   }
 
@@ -3161,8 +3192,11 @@ class _PageScaffold extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // 页面标题 + 右侧按钮
+        // 间距规范：Win 端标题距顶 5px（比 macOS 的 20 上移 15px）；
+        // 标题与下一行内容间距 20px（本行 bottom 4 + 内容区自带顶部 padding 16 = 20）
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+          padding: EdgeInsets.fromLTRB(
+              24, Platform.isWindows ? 5 : 20, 24, 4),
           child: Row(
             children: [
               Expanded(
