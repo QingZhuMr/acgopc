@@ -71,15 +71,20 @@ class ChatStore {
   /// 背景：早期版本切换账号时，上个账号残留的 WS/sync 任务可能把消息写入
   /// 新账号库（chat_id 为他人会话）。身份校验已堵住新增，但历史脏数据
   /// 需要兜底清除，否则会话列表会出现"别人的会话"。
-  /// 判定规则：chat_id 格式 `min_max`，拆出双方 id，**只要有一方是当前 uid**
-  /// 即视为本账号数据（保留），双方都不是 → 脏数据删除。
+  ///
+  /// 三步清理：
+  /// 1. 删不属于本账号的**消息**（chat_id 双方都不含 uid）
+  /// 2. 删不属于本账号的**会话**（同上）
+  /// 3. 合并**同一个对端**的重复会话（不同 chat_id 历史生成不规范，
+  ///    如 `19_21` 和 `21_19` 都用过；按 peer_id 分组保留最新一条，
+  ///    其他会话和其消息一起删/合并 chat_id）
   Future<void> pruneForeignData(int uid) async {
     if (uid <= 0) return;
     try {
       final db = await _database;
       if (_dbUid != uid) return; // 连接不属于该账号则跳过（防误删）
 
-      // 1) 清理消息
+      // 1) 清理不属于本账号的消息
       final msgs = await db.query('local_chat_message',
           columns: ['id', 'chat_id']);
       final deadMsgIds = <int>[];
@@ -95,7 +100,7 @@ class ChatStore {
             where: 'id = ?', whereArgs: [id]);
       }
 
-      // 2) 清理会话
+      // 2) 清理不属于本账号的会话
       final convs = await db.query('local_conversation',
           columns: ['chat_id']);
       for (final row in convs) {
@@ -107,12 +112,60 @@ class ChatStore {
         }
       }
 
-      if (deadMsgIds.isNotEmpty) {
+      // 3) 合并同一个 peer 的重复会话（不同 chat_id 历史不规范）
+      final merged = await _mergeDuplicateConversations(uid);
+
+      if (deadMsgIds.isNotEmpty || merged) {
         _notifyUnreadChanged();
       }
     } catch (_) {
       // 兜底清理失败不影响主流程（下次登录再试）
     }
+  }
+
+  /// 合并**同一个 peer** 的多个会话（chat_id 历史不规范，如 `19_21` 和 `21_19`）。
+  ///
+  /// 对每个 peer：保留**最新一条**会话（按 last_msg_time 最大）作为 canonical，
+  /// 其他会话删掉，其消息的 chat_id 重映射到 canonical。
+  Future<bool> _mergeDuplicateConversations(int uid) async {
+    final db = await _database;
+    final convs = await db.query('local_conversation');
+    if (convs.length < 2) return false;
+
+    // 按 peerId 分组：peerId → [(chatId, lastMsgTime)]
+    final groups = <int, List<Map<String, dynamic>>>{};
+    for (final c in convs) {
+      final chatId = c['chat_id']?.toString() ?? '';
+      if (chatId.isEmpty) continue;
+      final peerId = _peerOfChatId(chatId, uid);
+      if (peerId == null) continue;
+      groups.putIfAbsent(peerId, () => []).add({
+        'chat_id': chatId,
+        'last_msg_time': (c['last_msg_time'] as num?)?.toInt() ?? 0,
+      });
+    }
+
+    var merged = false;
+    for (final entry in groups.entries) {
+      final list = entry.value;
+      if (list.length < 2) continue;
+      // 按 last_msg_time 降序排：最新一条作为 canonical
+      list.sort((a, b) => (b['last_msg_time'] as int).compareTo(a['last_msg_time'] as int));
+      final canonical = list.first['chat_id'] as String;
+      for (var i = 1; i < list.length; i++) {
+        final oldId = list[i]['chat_id'] as String;
+        if (oldId == canonical) continue;
+        // 把老会话的消息 chat_id 重映射到 canonical
+        await db.rawUpdate(
+            'UPDATE local_chat_message SET chat_id = ? WHERE chat_id = ?',
+            [canonical, oldId]);
+        // 删除老会话
+        await db.delete('local_conversation',
+            where: 'chat_id = ?', whereArgs: [oldId]);
+        merged = true;
+      }
+    }
+    return merged;
   }
 
   /// chat_id（`min_max`）是否属于 [uid]：拆出双方 id，至少一方等于 uid
@@ -123,6 +176,18 @@ class ChatStore {
     final b = int.tryParse(parts[1]);
     if (a == null || b == null) return false;
     return a == uid || b == uid;
+  }
+
+  /// 从 chat_id 拆出对端 id（peer）；chat_id 非法或双方之一等于 uid。
+  int? _peerOfChatId(String chatId, int uid) {
+    final parts = chatId.split('_');
+    if (parts.length != 2) return null;
+    final a = int.tryParse(parts[0]);
+    final b = int.tryParse(parts[1]);
+    if (a == null || b == null) return null;
+    if (a == uid) return b;
+    if (b == uid) return a;
+    return null;
   }
 
   Future<Database> get _database async {
