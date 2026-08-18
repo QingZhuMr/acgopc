@@ -27,6 +27,12 @@ abstract final class AppConfig {
   /// 通用 Logo 网络地址（登录页/关于页展示；留空则回退 assetLogo）
   static const String appLogoUrl = '';
 
+  /// 应用通用 logo（asset 相对路径）
+  static const String assetLogo = 'assets/images/app_logo.png';
+
+  /// 托盘图标（asset 相对路径，Windows 需 .ico）
+  static const String assetTrayIcon = 'assets/images/app_icon.ico';
+
   /// 后端 API 接口地址（对接 api 应用）
   /// 生产环境改为 https://你的域名
   static const String apiBase = 'https://api.yeahbear.cn';
@@ -57,14 +63,6 @@ abstract final class AppConfig {
 
   /// 默认头像兜底地址（相对 API 域名）
   static const String defaultAvatarPath = '/static/admin/img/default-avatar.png';
-
-  // ==================== 资源路径 ====================
-
-  /// 应用通用 logo（asset 相对路径）
-  static const String assetLogo = 'assets/images/app_logo.png';
-
-  /// 托盘图标（asset 相对路径，Windows 需 .ico）
-  static const String assetTrayIcon = 'assets/images/app_icon.ico';
 
   // ==================== 目录 / 文件 ====================
 
