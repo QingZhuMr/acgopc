@@ -31,6 +31,7 @@ import 'core/device_service.dart';
 import 'core/window_effect.dart';
 import 'pages/login_page.dart';
 import 'pages/maintenance.dart';
+import 'pages/message_page.dart';
 import 'services/notification_center.dart';
 import 'pages/notification_page.dart';
 import 'widgets/bubble_menu.dart';
@@ -502,6 +503,12 @@ class _HomePageState extends State<HomePage> {
   // 注意：用 getter 而非 late final，确保每次 build 时 `_ProfileView.active`
   // 都能随 `_currentIndex` 实时更新（切到个人中心时刷新收藏列表）。
   List<_NavItem> get _navItems => [
+        // 消息入口（广场上方，聊天气泡图标）
+        _NavItem(
+          Icons.chat_bubble_outline_rounded,
+          '消息',
+          MessagePage(currentUserId: _resolveUid(widget.user)),
+        ),
         _NavItem(
           Icons.space_dashboard_rounded,
           '广场',

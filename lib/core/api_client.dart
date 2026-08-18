@@ -413,6 +413,55 @@ class ApiClient {
     );
   }
 
+  /// 关注 / 取消关注（切换，业务接口）
+  ///
+  /// 返回 data：{ is_following, is_mutual }
+  Future<http.Response> toggleFollow(int targetUid) {
+    final path = '/user/follow';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'target_uid': '$targetUid'},
+    );
+  }
+
+  /// 好友列表（互相关注，业务接口）
+  ///
+  /// 返回 data：{ list[], page, total, has_more }，
+  /// list[] = { user_id, nickname, avatar, follow_time }
+  Future<http.Response> getFriends({int page = 1, int pageSize = 20}) {
+    final path = '/user/friends';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      'page': '$page',
+      'page_size': '$pageSize',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
+  /// 关注状态（业务接口）
+  ///
+  /// 返回 data：{ is_following, is_mutual }
+  Future<http.Response> getFollowStatus(int targetUid) {
+    final path = '/user/followStatus';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      'target_uid': '$targetUid',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
   /// 评论点赞 / 取消点赞（切换，业务接口）
   ///
   /// 返回：is_liked、like_count
