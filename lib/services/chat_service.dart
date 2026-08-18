@@ -17,27 +17,53 @@ class ChatService {
 
   bool get isReady => _ready;
 
-  /// 初始化（登录后/进入消息页时调用）：确保本地密钥存在并上传公钥
+  /// 初始化（登录后/进入消息页时调用）：确保本地密钥存在
+  ///
+  /// 本地无密钥时**先向服务器领取托管私钥**（保证能解密历史消息），
+  /// 服务器无托管则本地生成新密钥并上传公钥。
   Future<void> init(int userId) async {
     _userId = userId;
     // 检查本地密钥
     var keyPair = await ChatStore.instance.getKeyPair(userId);
     if (keyPair == null) {
+      // 1) 尝试领取服务器托管密钥（含公钥+私钥）
+      try {
+        final resp = await ApiClient.instance
+            .getChatKey(claim: true)
+            .timeout(const Duration(seconds: 10));
+        final json = ApiClient.safeJsonDecode(resp.body);
+        if (json['code'] == 0) {
+          final data = (json['data'] ?? {}) as Map;
+          final pub = data['public_key']?.toString() ?? '';
+          final priv = data['private_key']?.toString() ?? '';
+          if (pub.isNotEmpty && priv.isNotEmpty) {
+            await ChatStore.instance.saveKeyPair(
+              userId: userId,
+              privateKey: priv,
+              publicKey: pub,
+            );
+            keyPair = (privateKey: priv, publicKey: pub);
+          }
+        }
+      } catch (_) {
+        // 领取失败则本地生成
+      }
+    }
+    if (keyPair == null) {
+      // 2) 服务器无托管 → 本地生成新密钥对
       keyPair = ChatCrypto.generateKeyPair();
       await ChatStore.instance.saveKeyPair(
         userId: userId,
         privateKey: keyPair.privateKey,
         publicKey: keyPair.publicKey,
       );
+      // 上传公钥（幂等，服务器唯一约束覆盖）
+      try {
+        await ApiClient.instance
+            .postChatKey(keyPair.publicKey)
+            .timeout(const Duration(seconds: 10));
+      } catch (_) {}
     }
-    // 上传公钥（幂等，每次启动都同步一次，服务器唯一约束覆盖）
-    try {
-      final resp = await ApiClient.instance.postChatKey(keyPair.publicKey);
-      final json = ApiClient.safeJsonDecode(resp.body);
-      if (json['code'] != 0) {
-        // 上传失败不阻塞（聊天时可能用旧公钥）
-      }
-    } catch (_) {}
     _ready = true;
   }
 
@@ -80,7 +106,7 @@ class ChatService {
       }
     }
     if (pub == null || pub.isEmpty) {
-      // 对方未上传公钥：本地消息标记"发送失败"，避免永久转圈
+      // 极少数网络异常导致拿不到公钥：标记失败并自动重试（服务器总能生成公钥）
       await ChatStore.instance.upsertMessage(
         chatId: chatId,
         msgId: 0,
@@ -95,7 +121,8 @@ class ChatService {
         sendStatus: 2,
         createTime: now,
       );
-      return (msgId: 0, ok: false, error: '对方尚未开启聊天');
+      _scheduleRetry();
+      return (msgId: 0, ok: false, error: '发送失败，正在重试');
     }
 
     // 加密（密钥格式非法等异常容错）
@@ -118,7 +145,8 @@ class ChatService {
         sendStatus: 2,
         createTime: now,
       );
-      return (msgId: 0, ok: false, error: '对方聊天密钥无效，暂无法发送');
+      _scheduleRetry();
+      return (msgId: 0, ok: false, error: '发送失败，正在重试');
     }
 
     // 本地暂存（发送中）

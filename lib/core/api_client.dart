@@ -524,6 +524,22 @@ class ApiClient {
     );
   }
 
+  /// 获取本人聊天密钥（业务接口）：返回公钥；claim=true 时返回并领取托管私钥
+  ///
+  /// 服务端在用户无公钥时自动生成并托管（微信/QQ 离线可达方案）。
+  Future<http.Response> getChatKey({bool claim = false}) {
+    final path = '/chat/key';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      if (claim) 'claim': '1',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
   /// 批量获取用户聊天公钥（业务接口）
   Future<http.Response> getChatKeys(List<int> userIds) {
     final path = '/chat/keys';
