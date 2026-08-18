@@ -2225,6 +2225,7 @@ class _ProfileViewState extends State<_ProfileView> {
                         columns: _favColumns(constraints.maxWidth),
                         coverHeight: _favCoverHeight,
                         onPostTap: (p) => _openMyPost(p),
+                        onContextMenu: (p, pos) => _myPostContextMenu(p, pos),
                       ),
                     if (_myLoadingMore)
                       const Padding(
@@ -2414,6 +2415,84 @@ class _ProfileViewState extends State<_ProfileView> {
       }
     } catch (_) {
       setState(() => _myLoadingMore = false);
+    }
+  }
+
+  /// 动态卡片右键菜单（删除自己的动态）
+  Future<void> _myPostContextMenu(Map<String, dynamic> p, Offset globalPos) async {
+    final id = (p['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return;
+    final b = Theme.of(context).brightness;
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+          globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy),
+      color: bgColor(b),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(kRadiusMd),
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'del',
+          height: 36,
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 16, color: kDanger),
+              const SizedBox(width: 8),
+              Text('删除动态', style: TextStyle(fontSize: 13, color: kDanger)),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (action != 'del' || !mounted) return;
+    _deleteMyPost(id);
+  }
+
+  /// 删除自己的动态（确认后删除，成功后从列表移除）
+  Future<void> _deleteMyPost(int postId) async {
+    final b = Theme.of(context).brightness;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: bgColor(b),
+        title: const Text('删除动态'),
+        content: const Text('确定要删除这条动态吗？删除后不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('取消', style: TextStyle(color: textMutedColor(b))),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: kDanger),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      final resp = await ApiClient.instance
+          .deletePost(postId: postId)
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (resp.statusCode == 200 && json['code'] == 0) {
+        if (mounted) {
+          setState(() {
+            _myPosts.removeWhere((p) => (p['id'] as num?)?.toInt() == postId);
+          });
+          NotifyStack.success('动态已删除', title: '提示');
+        }
+      } else {
+        if (mounted) {
+          NotifyStack.warning(json['msg']?.toString() ?? '删除失败', title: '提示');
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        NotifyStack.warning('删除失败，请稍后重试', title: '提示');
+      }
     }
   }
 
