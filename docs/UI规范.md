@@ -336,7 +336,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 ## 10.2 消息页（好友列表 + 聊天）
 
 - **入口**：左侧导航「广场」上方「消息」项（图标 `Icons.mode_comment_rounded` 圆润聊天气泡），页面内嵌于左侧导航栏（不 push、无返回按钮）。
-- **背景与顶栏**：消息页整体背景 = **`bgSoftColor`**（与左侧导航栏一致）；**macOS 无顶栏**（消息页顶到窗口顶），**Windows 顶栏保留但背景同色融合**。
+- **背景与顶栏**：**顶栏**背景 = `bgSoftColor`（与左侧导航栏一致，`_TitleBar` 传 `color: bgSoftColor(b)`）；**好友列表**（左 260px）背景 = `bgSoftColor`（比聊天区**深**）；**聊天内容页**（右）背景 = **主背景 `bgColor`**（标题栏/输入区同用主背景色）；**macOS 无顶栏**（消息页顶到窗口顶）。
 - **布局**：左右分栏——左侧好友列表（宽 260px，**无分割线**）；右侧聊天区。
 - **好友列表**：标题「好友」（16px/w600）；好友项 = 头像（40px 圆形）+ 昵称（14px/w500）；选中项 `primarySoftColor` 底；空态「还没有好友 / 互相关注后即可成为好友」+ `Icons.chat_bubble_rounded` 圆润气泡图标；分页加载（page_size=50，触底加载更多）。**好友 = 互相关注**（`/api/user/friends`）。
 - **聊天区**（第二期实现）：未选中好友时右侧为 `Icons.chat_bubble_rounded` 64px 圆润气泡占位（颜色 `textFaintColor`——白天很浅/晚上很深，**无文字**）；选中好友后显示聊天对象标题栏（头像 32px + 昵称 15px/w600，无分割线）+ 消息区 + 输入区（禁用）。
