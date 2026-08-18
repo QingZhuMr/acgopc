@@ -37,6 +37,7 @@ import 'widgets/bubble_menu.dart';
 import 'widgets/notify.dart';
 import 'widgets/pick_images.dart';
 import 'pages/post_detail_page.dart';
+import 'pages/privacy_settings_page.dart';
 import 'pages/publish_post_page.dart';
 import 'services/secure_storage.dart';
 import 'pages/splash_page.dart';
@@ -582,6 +583,17 @@ class _HomePageState extends State<HomePage> {
         postBrief: post,
         postId: id,
         currentUserId: currentUid,
+        embedded: true,
+        onBack: () => setState(() => _macOverlay = null),
+      );
+    });
+  }
+
+  /// 在内容区打开隐私设置页（保留左侧导航栏，不遮挡）
+  void openPrivacySettings() {
+    if (!mounted) return;
+    setState(() {
+      _macOverlay = PrivacySettingsPage(
         embedded: true,
         onBack: () => setState(() => _macOverlay = null),
       );
@@ -1940,6 +1952,15 @@ class _ProfileViewState extends State<_ProfileView> {
           width: 120,
           itemHeight: 40,
           items: [
+            BubbleMenuItem(
+              label: '隐私设置',
+              icon: Icons.privacy_tip_outlined,
+              color: null,
+              onTap: () {
+                // 内容区覆盖式打开隐私设置页（保留左侧导航栏，不遮挡）
+                _HomePageState.current?.openPrivacySettings();
+              },
+            ),
             BubbleMenuItem(
               label: '更改密码',
               icon: Icons.lock_outline,
