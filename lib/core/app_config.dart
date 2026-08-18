@@ -2,10 +2,20 @@ import 'dart:io';
 
 /// 应用全局配置
 ///
-/// 集中管理应用名称、接口地址、目录名、图片资源等可复用变量。
+/// ══════════════════════════════════════════════════════════════════
+///   【快速编辑区】以下常量改动即可全局生效，无需搜索散落代码：
+///     appName        应用中文标题（窗口标题、托盘 tooltip、登录页等）
+///     appNameEn      应用英文名（目录名、进程名、快捷方式、缓存目录）
+///     appVersion     应用版本号（配合后端 version 表检查更新）
+///     appLogoUrl     通用 Logo 网络地址（登录页/关于页展示，留空用 assetLogo）
+///     assetLogo      App Logo（assets 资源相对路径）
+///     assetTrayIcon  托盘图标（Windows 需 .ico）
+///     apiBase        后端 API 接口地址
+///     apiSecret      签名密钥（须与后端 .env 的 API_SECRET 一致）
+/// ══════════════════════════════════════════════════════════════════
 /// 其他文件统一从本类取值，避免散落硬编码，改一处全局生效。
 abstract final class AppConfig {
-  /// 应用中文名称（界面展示用）
+  /// 应用中文名称（界面展示用；窗口标题、托盘 tooltip、快捷方式名）
   static const String appName = '耶熊';
 
   /// 应用英文名称（目录名、进程名、配置 key 等）
@@ -13,6 +23,9 @@ abstract final class AppConfig {
 
   /// 应用版本
   static const String appVersion = '0.1.0';
+
+  /// 通用 Logo 网络地址（登录页/关于页展示；留空则回退 assetLogo）
+  static const String appLogoUrl = '';
 
   /// 后端 API 接口地址（对接 api 应用）
   /// 生产环境改为 https://你的域名
