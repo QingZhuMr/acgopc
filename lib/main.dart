@@ -32,6 +32,7 @@ import 'core/window_effect.dart';
 import 'pages/login_page.dart';
 import 'pages/maintenance.dart';
 import 'pages/message_page.dart';
+import 'services/chat_service.dart';
 import 'services/notification_center.dart';
 import 'pages/notification_page.dart';
 import 'widgets/bubble_menu.dart';
@@ -253,6 +254,8 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
       onMaintenance: _handleWsMaintenance,
       onReplyNotice: NotificationCenter.instance.handleWsReply,
       onFollowNotice: NotificationCenter.instance.handleWsFollow,
+      // 断线重连成功后：补发聊天失败消息
+      onReconnected: () => ChatService.instance.onReconnected(),
     );
     // 启动通知中心：初始化系统通知 + 拉取未读数 + 定时轮询兜底
     NotificationCenter.instance.start(

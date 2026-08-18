@@ -159,6 +159,12 @@ class _MessagePageState extends State<MessagePage> {
       await ChatService.instance.pullHistory(
         peerId: (friend['user_id'] as num?)?.toInt() ?? 0,
       );
+      // 打开会话：清零本地未读
+      final myUid = widget.currentUserId;
+      final peerId = (friend['user_id'] as num?)?.toInt() ?? 0;
+      final chatId =
+          '${myUid < peerId ? myUid : peerId}_${myUid < peerId ? peerId : myUid}';
+      await ChatStore.instance.clearUnread(chatId);
       _loadLocalMessages();
     } catch (_) {
       _loadLocalMessages();
@@ -178,7 +184,30 @@ class _MessagePageState extends State<MessagePage> {
     });
   }
 
-  /// 发送消息
+  /// 手动重发失败消息（复用原 client_msg_id 保证幂等）
+  Future<void> _retryMessage(Map<String, dynamic> m) async {
+    final clientMsgId = m['client_msg_id']?.toString() ?? '';
+    final plaintext = m['plaintext']?.toString() ?? '';
+    final peerId = (m['receiver_id'] as num?)?.toInt() ?? 0;
+    if (clientMsgId.isEmpty || plaintext.isEmpty || peerId <= 0) return;
+    // 标记发送中
+    await ChatStore.instance.updateSendStatus(
+        clientMsgId: clientMsgId, sendStatus: 0);
+    if (mounted) await _loadLocalMessages();
+    final result = await ChatService.instance.sendMessage(
+      receiverId: peerId,
+      plaintext: plaintext,
+      peerPublicKey: _peerPublicKey,
+      forceClientMsgId: clientMsgId,
+    );
+    if (!mounted) return;
+    if (!result.ok) {
+      NotifyStack.warning(result.error, title: '提示');
+    }
+    await _loadLocalMessages();
+  }
+
+  /// 发送消息（乐观更新 + 异步发送，幂等 client_msg_id）
   Future<void> _sendMessage() async {
     final text = _inputCtrl.text.trim();
     if (text.isEmpty || _sending) return;
@@ -187,6 +216,10 @@ class _MessagePageState extends State<MessagePage> {
     final peerId = (friend['user_id'] as num?)?.toInt() ?? 0;
     setState(() => _sending = true);
 
+    // 先生成幂等 client_msg_id（乐观消息与实际发送共用，避免两条记录）
+    final clientMsgId =
+        '${widget.currentUserId}_${DateTime.now().millisecondsSinceEpoch}';
+
     // 乐观更新：先展示本地消息
     final myUid = widget.currentUserId;
     final chatId = '${myUid < peerId ? myUid : peerId}_${myUid < peerId ? peerId : myUid}';
@@ -194,7 +227,7 @@ class _MessagePageState extends State<MessagePage> {
     await ChatStore.instance.upsertMessage(
       chatId: chatId,
       msgId: 0,
-      clientMsgId: 'local_${now}_${_messages.length}',
+      clientMsgId: clientMsgId,
       senderId: myUid,
       receiverId: peerId,
       msgType: 1,
@@ -212,6 +245,7 @@ class _MessagePageState extends State<MessagePage> {
       receiverId: peerId,
       plaintext: text,
       peerPublicKey: _peerPublicKey,
+      forceClientMsgId: clientMsgId,
     );
     if (!mounted) return;
     if (!result.ok) {
@@ -596,7 +630,17 @@ class _MessagePageState extends State<MessagePage> {
                       Icon(Icons.schedule, size: 12, color: textFaintColor(b)),
                     ] else if (isMine && sendStatus == 2) ...[
                       const SizedBox(width: 4),
-                      Icon(Icons.error_outline, size: 12, color: kDanger),
+                      // 失败消息可点击重发
+                      InkWell(
+                        onTap: () => _retryMessage(m),
+                        mouseCursor: SystemMouseCursors.click,
+                        borderRadius: BorderRadius.circular(4),
+                        child: Tooltip(
+                          message: '发送失败，点击重发',
+                          child: Icon(Icons.error_outline,
+                              size: 12, color: kDanger),
+                        ),
+                      ),
                     ],
                   ],
                 ),

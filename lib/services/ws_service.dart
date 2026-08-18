@@ -79,6 +79,9 @@ class WsService {
   /// 连接状态回调（可选，用于 UI 展示）
   void Function(bool connected)? onConnectionChange;
 
+  /// 重连成功回调（登录态有效；用于聊天补发失败消息等）
+  void Function()? onReconnected;
+
   /// 是否已连接
   bool get isConnected => _channel != null && _sub != null;
 
@@ -89,12 +92,14 @@ class WsService {
     void Function(Map<String, dynamic> maintenance)? onMaintenance,
     void Function(Map<String, dynamic> notification)? onReplyNotice,
     void Function(Map<String, dynamic> notification)? onFollowNotice,
+    void Function()? onReconnected,
   }) {
     this.onForceLogout = onForceLogout;
     this.onUpdate = onUpdate;
     this.onMaintenance = onMaintenance;
     this.onReplyNotice = onReplyNotice;
     this.onFollowNotice = onFollowNotice;
+    this.onReconnected = onReconnected;
     if (_running) return;
     _running = true;
     _stopped = false;
@@ -151,9 +156,14 @@ class WsService {
       // 连接建立后发送认证
       channel.sink.add(jsonEncode({'type': 'auth', 'device_key': deviceKey}));
       _connecting = false;
+      final wasDisconnected = _disconnectSince != null;
       _disconnectSince = null; // 重连成功，清空断线计时
       _lastPongAt = DateTime.now();
       onConnectionChange?.call(true);
+      // 曾断线后重连成功：触发上层补偿（补发失败消息/增量同步）
+      if (wasDisconnected) {
+        onReconnected?.call();
+      }
 
       // 启动心跳
       _pingTimer?.cancel();

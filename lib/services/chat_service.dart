@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../core/api_client.dart';
 import 'chat_crypto.dart';
 import 'chat_store.dart';
@@ -49,12 +51,15 @@ class ChatService {
   }
 
   /// 发送消息：加密 → 本地暂存 → 调接口 → 更新状态
+  ///
+  /// [forceClientMsgId]：重发时复用原 client_msg_id 保证幂等
   Future<({int msgId, bool ok, String error})> sendMessage({
     required int receiverId,
     required String plaintext,
     String? peerPublicKey,
+    String? forceClientMsgId,
   }) async {
-    final clientMsgId = _genClientMsgId();
+    final clientMsgId = forceClientMsgId ?? _genClientMsgId();
     final chatId = _chatId(_userId, receiverId);
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
@@ -126,19 +131,22 @@ class ChatService {
       createTime: now,
     );
 
-    // 调接口
+    // 调接口（10s 超时）
     try {
-      final resp = await ApiClient.instance.sendChatMessage(
-        receiverId: receiverId,
-        body: encrypted.body,
-        nonce: encrypted.nonce,
-        ephemeralPub: encrypted.encKey,
-        clientMsgId: clientMsgId,
-      );
+      final resp = await ApiClient.instance
+          .sendChatMessage(
+            receiverId: receiverId,
+            body: encrypted.body,
+            nonce: encrypted.nonce,
+            ephemeralPub: encrypted.encKey,
+            clientMsgId: clientMsgId,
+          )
+          .timeout(const Duration(seconds: 10));
       final json = ApiClient.safeJsonDecode(resp.body);
       if (json['code'] != 0) {
         await ChatStore.instance.updateSendStatus(
             clientMsgId: clientMsgId, sendStatus: 2);
+        _scheduleRetry();
         return (msgId: 0, ok: false, error: json['msg']?.toString() ?? '发送失败');
       }
       final data = (json['data'] ?? {}) as Map;
@@ -147,9 +155,63 @@ class ChatService {
           clientMsgId: clientMsgId, sendStatus: 1);
       return (msgId: msgId, ok: true, error: '');
     } catch (e) {
+      // 网络异常/超时：标记失败并入自动重发队列
       await ChatStore.instance.updateSendStatus(
           clientMsgId: clientMsgId, sendStatus: 2);
+      _scheduleRetry();
       return (msgId: 0, ok: false, error: '网络异常，发送失败');
+    }
+  }
+
+  // ===== 自动重发队列（大厂可靠性兜底） =====
+
+  Timer? _retryTimer;
+  bool _retrying = false;
+  int _retryDelay = 1; // 秒，指数退避 1→2→4→8→16→30 封顶
+  final Set<int> _retryingChatIds = {};
+
+  /// 发送失败/超时后触发自动重试（指数退避）
+  void _scheduleRetry() {
+    _retryTimer?.cancel();
+    final delay = _retryDelay > 30 ? 30 : _retryDelay;
+    _retryTimer = Timer(Duration(seconds: delay), () {
+      _retryTimer = null;
+      _retryDelay = (_retryDelay * 2 > 30) ? 30 : _retryDelay * 2;
+      retryPending();
+    });
+  }
+
+  /// WS 重连成功：重置退避并立即尝试补发失败消息
+  void onReconnected() {
+    _retryDelay = 1;
+    retryPending();
+  }
+
+  /// 尝试补发所有失败消息
+  Future<void> retryPending() async {
+    if (_retrying) return;
+    _retrying = true;
+    try {
+      final pending = await ChatStore.instance.getPendingRetry(20);
+      for (final m in pending) {
+        final clientMsgId = m['client_msg_id']?.toString() ?? '';
+        final receiverId = (m['receiver_id'] as num?)?.toInt() ?? 0;
+        final plaintext = m['plaintext']?.toString() ?? '';
+        if (clientMsgId.isEmpty || receiverId <= 0 || plaintext.isEmpty) continue;
+        final chatId = _chatId(_userId, receiverId);
+        if (_retryingChatIds.contains(chatId)) continue;
+        // 重新走发送（幂等 client_msg_id）
+        final r = await sendMessage(
+          receiverId: receiverId,
+          plaintext: plaintext,
+          forceClientMsgId: clientMsgId,
+        );
+        if (r.ok) break; // 成功一条即退出，剩余下次触发
+      }
+    } catch (_) {
+      // 重试失败保持队列，下次再触发
+    } finally {
+      _retrying = false;
     }
   }
 
@@ -194,6 +256,17 @@ class ChatService {
       ephemeralPub: ephem,
       sendStatus: 1,
       createTime: createTime,
+    );
+
+    // 更新会话摘要（未读数 +1；对方发来的才计）
+    await ChatStore.instance.upsertConversation(
+      chatId: chatId,
+      peerId: senderId,
+      peerNickname: '',
+      peerAvatar: '',
+      lastMsgText: plaintext,
+      lastMsgTime: createTime,
+      unreadDelta: senderId != _userId ? 1 : 0,
     );
   }
 
