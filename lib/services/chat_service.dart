@@ -69,6 +69,21 @@ class ChatService {
       }
     }
     if (pub == null || pub.isEmpty) {
+      // 对方未上传公钥：本地消息标记"发送失败"，避免永久转圈
+      await ChatStore.instance.upsertMessage(
+        chatId: chatId,
+        msgId: 0,
+        clientMsgId: clientMsgId,
+        senderId: _userId,
+        receiverId: receiverId,
+        msgType: 1,
+        plaintext: plaintext,
+        ciphertext: '',
+        nonce: '',
+        ephemeralPub: '',
+        sendStatus: 2,
+        createTime: now,
+      );
       return (msgId: 0, ok: false, error: '对方尚未开启聊天');
     }
 
@@ -77,6 +92,21 @@ class ChatService {
     try {
       encrypted = ChatCrypto.encrypt(plaintext, pub);
     } catch (_) {
+      // 密钥非法：本地消息标记失败
+      await ChatStore.instance.upsertMessage(
+        chatId: chatId,
+        msgId: 0,
+        clientMsgId: clientMsgId,
+        senderId: _userId,
+        receiverId: receiverId,
+        msgType: 1,
+        plaintext: plaintext,
+        ciphertext: '',
+        nonce: '',
+        ephemeralPub: '',
+        sendStatus: 2,
+        createTime: now,
+      );
       return (msgId: 0, ok: false, error: '对方聊天密钥无效，暂无法发送');
     }
 
