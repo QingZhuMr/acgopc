@@ -433,18 +433,18 @@ class _HomePageState extends State<HomePage> {
   /// 当前挂载的实例（macOS 用于 WS 推送在内容区打开帖子，保留左侧导航栏）
   static _HomePageState? current;
 
-  // 当前选中的导航索引（0=广场，1=个人中心）
-  int _currentIndex = 0;
+  // 当前选中的导航索引（0=消息，1=广场，2=个人中心）
+  int _currentIndex = 1;
 
   /// macOS 内容区覆盖页（发帖/详情内嵌展示，保留左侧导航栏，无返回按钮）
   /// 非 macOS 恒为 null
   Widget? _macOverlay;
 
-  /// 通知 tab 索引（双端统一为 2）
-  int get _notificationIndex => 2;
+  /// 通知 tab 索引（0=消息 1=广场 2=我的，通知=3）
+  int get _notificationIndex => 3;
 
-  /// 设置 tab 索引（双端统一为 3，通知 tab 占第 2 位）
-  int get _settingsIndex => 3;
+  /// 设置 tab 索引（通知=3，设置=4）
+  int get _settingsIndex => 4;
 
   @override
   void initState() {
@@ -524,7 +524,7 @@ class _HomePageState extends State<HomePage> {
           _ProfileView(
             user: widget.user,
             onLogout: widget.onLogout,
-            active: _currentIndex == 1,
+            active: _currentIndex == 2,
             onUserChanged: (_) {
               // 个人中心修改资料（昵称/头像）后触发刷新，让左侧头像等同步更新。
               // _ProfileView 会直接更新共享的 user map，这里只需触发 rebuild。
@@ -631,10 +631,10 @@ class _HomePageState extends State<HomePage> {
     if (!mounted || uid <= 0) return;
     final currentUid = _resolveUid(widget.user);
     if (uid == currentUid) {
-      // 自己 → 切到「我的」页面
+      // 自己 → 切到「我的」页面（0=消息 1=广场 2=我的）
       setState(() {
         _macOverlay = null;
-        _currentIndex = 1;
+        _currentIndex = 2;
       });
       return;
     }
@@ -695,21 +695,29 @@ class _HomePageState extends State<HomePage> {
           ),
         // 顶部留白：让导航项避开顶栏区域，与 Finder 侧边栏间距一致
         const SizedBox(height: 16),
+        // 导航项（消息，广场上方）
+        _MacRailItem(
+          icon: Icons.chat_bubble_outline_rounded,
+          label: '消息',
+          selected: _currentIndex == 0,
+          brightness: b,
+          onTap: () => _switchTab(0),
+        ),
         // 导航项（广场）
         _MacRailItem(
           icon: Icons.space_dashboard_rounded,
           label: '广场',
-          selected: _currentIndex == 0,
+          selected: _currentIndex == 1,
           brightness: b,
-          onTap: () => _switchTab(0),
+          onTap: () => _switchTab(1),
         ),
         // 导航项（个人中心）
         _MacRailItem(
           icon: Icons.person_rounded,
           label: '我的',
-          selected: _currentIndex == 1,
+          selected: _currentIndex == 2,
           brightness: b,
-          onTap: () => _switchTab(1),
+          onTap: () => _switchTab(2),
         ),
         const Spacer(),
         // 通知（双端统一：作为 tab 内嵌）
