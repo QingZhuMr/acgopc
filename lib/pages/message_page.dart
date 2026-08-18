@@ -108,19 +108,13 @@ class _MessagePageState extends State<MessagePage> {
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
     return Scaffold(
-      backgroundColor: bgColor(b),
+      // 消息页背景与左侧导航栏一致（bgSoftColor）
+      backgroundColor: bgSoftColor(b),
       body: Row(
         children: [
-          // ===== 左侧好友列表 =====
+          // ===== 左侧好友列表（无分割线） =====
           Container(
             width: 260,
-            decoration: BoxDecoration(
-              color: bgHoverColor(b),
-              border: Border(
-                right:
-                    BorderSide(color: textFaintColor(b).withValues(alpha: .3), width: 1),
-              ),
-            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -136,7 +130,6 @@ class _MessagePageState extends State<MessagePage> {
                     ),
                   ),
                 ),
-                const Divider(height: 1, color: Color(0x00000000)),
                 Expanded(
                   child: _buildFriendList(b),
                 ),
@@ -178,7 +171,7 @@ class _MessagePageState extends State<MessagePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.chat_bubble_outline_rounded,
+            Icon(Icons.chat_bubble_rounded,
                 size: 40, color: textFaintColor(b)),
             const SizedBox(height: 12),
             Text(
@@ -284,16 +277,11 @@ class _MessagePageState extends State<MessagePage> {
     final friend = _selectedFriend;
     if (friend == null) {
       return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.forum_outlined, size: 48, color: textFaintColor(b)),
-            const SizedBox(height: 12),
-            Text(
-              '选择一个好友开始聊天',
-              style: TextStyle(fontSize: 14, color: textSecondaryColor(b)),
-            ),
-          ],
+        // 圆润聊天气泡占位：白天很浅、晚上很深（用 textFaintColor 随主题），无文字
+        child: Icon(
+          Icons.chat_bubble_rounded,
+          size: 64,
+          color: textFaintColor(b),
         ),
       );
     }
@@ -302,16 +290,10 @@ class _MessagePageState extends State<MessagePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 聊天对象标题栏
+        // 聊天对象标题栏（无分割线）
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: bgHoverColor(b),
-            border: Border(
-              bottom:
-                  BorderSide(color: textFaintColor(b).withValues(alpha: .3), width: 1),
-            ),
-          ),
+          color: bgHoverColor(b),
           child: Row(
             children: [
               ClipOval(
@@ -337,25 +319,20 @@ class _MessagePageState extends State<MessagePage> {
             ],
           ),
         ),
-        // 消息区（第二期填充）
+        // 消息区（第二期填充）：圆润气泡占位（白天浅/晚上深，随主题）
         Expanded(
           child: Center(
-            child: Text(
-              '聊天功能开发中',
-              style: TextStyle(fontSize: 13, color: textFaintColor(b)),
+            child: Icon(
+              Icons.chat_bubble_rounded,
+              size: 48,
+              color: textFaintColor(b),
             ),
           ),
         ),
-        // 输入区（第二期填充）
+        // 输入区（第二期填充，无分割线）
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: bgHoverColor(b),
-            border: Border(
-              top:
-                  BorderSide(color: textFaintColor(b).withValues(alpha: .3), width: 1),
-            ),
-          ),
+          color: bgHoverColor(b),
           child: Row(
             children: [
               Expanded(

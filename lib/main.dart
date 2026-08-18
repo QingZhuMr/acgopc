@@ -503,9 +503,9 @@ class _HomePageState extends State<HomePage> {
   // 注意：用 getter 而非 late final，确保每次 build 时 `_ProfileView.active`
   // 都能随 `_currentIndex` 实时更新（切到个人中心时刷新收藏列表）。
   List<_NavItem> get _navItems => [
-        // 消息入口（广场上方，聊天气泡图标）
+        // 消息入口（广场上方，圆润聊天气泡图标）
         _NavItem(
-          Icons.chat_bubble_outline_rounded,
+          Icons.mode_comment_rounded,
           '消息',
           MessagePage(currentUserId: _resolveUid(widget.user)),
         ),
@@ -697,7 +697,7 @@ class _HomePageState extends State<HomePage> {
         const SizedBox(height: 16),
         // 导航项（消息，广场上方）
         _MacRailItem(
-          icon: Icons.chat_bubble_outline_rounded,
+          icon: Icons.mode_comment_rounded,
           label: '消息',
           selected: _currentIndex == 0,
           brightness: b,
@@ -770,11 +770,14 @@ class _HomePageState extends State<HomePage> {
             child: Column(
               children: [
                 // 自绘顶栏（macOS：红黄绿安全区 + 无窗口按钮；Windows：窗口按钮），仅占内容区
-                _TitleBar(brightness: b),
+                // 消息页（index 0）：macOS 不显示顶栏（消息页顶到窗口顶，背景与导航栏一致）；
+                // Windows 顶栏保留但背景用 bgSoftColor 与消息页融合
+                if (!Platform.isMacOS || _currentIndex != 0)
+                  _TitleBar(brightness: b),
                 // 下方内容区（无分割线，无边框；实心不透明）
                 Expanded(
                   child: Container(
-                    color: bgColor(b),
+                    color: _currentIndex == 0 ? bgSoftColor(b) : bgColor(b),
                     child: _macOverlay != null
                         // macOS 覆盖页（发帖/详情内嵌，保留导航栏）
                         ? _macOverlay!
@@ -829,6 +832,7 @@ class _MacRailItem extends StatelessWidget {
               const SizedBox(width: 10),
               Stack(
                 clipBehavior: Clip.none,
+                alignment: Alignment.center,
                 children: [
                   Icon(
                     icon,
