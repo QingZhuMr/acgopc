@@ -770,14 +770,17 @@ class _HomePageState extends State<HomePage> {
             child: Column(
               children: [
                 // 自绘顶栏（macOS：红黄绿安全区 + 无窗口按钮；Windows：窗口按钮），仅占内容区
-                // 消息页（index 0）：macOS 不显示顶栏（消息页顶到窗口顶，背景与导航栏一致）；
-                // Windows 顶栏保留但背景用 bgSoftColor 与消息页融合
+                // 消息页（index 0）：macOS 不显示顶栏（消息页顶到窗口顶）；
+                // Windows 顶栏保留但背景用 bgSoftColor 与左侧导航栏一致
                 if (!Platform.isMacOS || _currentIndex != 0)
-                  _TitleBar(brightness: b),
+                  _TitleBar(
+                    brightness: b,
+                    color: _currentIndex == 0 ? bgSoftColor(b) : null,
+                  ),
                 // 下方内容区（无分割线，无边框；实心不透明）
                 Expanded(
                   child: Container(
-                    color: _currentIndex == 0 ? bgSoftColor(b) : bgColor(b),
+                    color: bgColor(b),
                     child: _macOverlay != null
                         // macOS 覆盖页（发帖/详情内嵌，保留导航栏）
                         ? _macOverlay!
@@ -884,7 +887,10 @@ class _MacRailItem extends StatelessWidget {
 class _TitleBar extends StatelessWidget {
   final Brightness brightness;
 
-  const _TitleBar({required this.brightness});
+  /// 顶栏背景色（消息页时传 bgSoftColor 与左侧导航栏一致）
+  final Color? color;
+
+  const _TitleBar({required this.brightness, this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -892,7 +898,7 @@ class _TitleBar extends StatelessWidget {
     if (Platform.isMacOS) {
       return Container(
         height: 20,
-        color: bgColor(brightness),
+        color: color ?? bgColor(brightness),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onPanStart: (_) => windowManager.startDragging(),
@@ -903,7 +909,7 @@ class _TitleBar extends StatelessWidget {
     // Windows：内容区顶栏 35px，含拖拽区 + 窗口控制按钮
     return Container(
       height: 35,
-      color: bgColor(brightness),
+      color: color ?? bgColor(brightness),
       child: Row(
         children: [
           // 可拖拽区域（撑满，可拖动窗口）

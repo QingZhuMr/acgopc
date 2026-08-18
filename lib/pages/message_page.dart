@@ -108,13 +108,14 @@ class _MessagePageState extends State<MessagePage> {
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
     return Scaffold(
-      // 消息页背景与左侧导航栏一致（bgSoftColor）
-      backgroundColor: bgSoftColor(b),
+      // 聊天内容页用主背景色
+      backgroundColor: bgColor(b),
       body: Row(
         children: [
-          // ===== 左侧好友列表（无分割线） =====
+          // ===== 左侧好友列表（无分割线）：颜色比聊天区深（用 bgSoft，同左侧导航栏） =====
           Container(
             width: 260,
+            color: bgSoftColor(b),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -290,10 +291,10 @@ class _MessagePageState extends State<MessagePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 聊天对象标题栏（无分割线）
+        // 聊天对象标题栏（无分割线，主背景色）
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          color: bgHoverColor(b),
+          color: bgColor(b),
           child: Row(
             children: [
               ClipOval(
@@ -329,10 +330,10 @@ class _MessagePageState extends State<MessagePage> {
             ),
           ),
         ),
-        // 输入区（第二期填充，无分割线）
+        // 输入区（第二期填充，无分割线，主背景色）
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          color: bgHoverColor(b),
+          color: bgColor(b),
           child: Row(
             children: [
               Expanded(
