@@ -30,5 +30,9 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSUserNotificationUsageDescription</key>
+	<string>耶熊需要发送通知，以便在收到聊天回复、点赞收藏等动态时及时提醒你</string>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>耶熊需要发送通知，以便在收到聊天回复、点赞收藏等动态时及时提醒你</string>
 </dict>
 </plist>
