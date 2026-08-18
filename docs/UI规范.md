@@ -376,6 +376,9 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
   - **按访问日期分组**：「今天 / 昨天 / 更早」三组（自然日判定与 `formatRelativeTime` 一致），每组标题 13px/w600 `textMutedColor` + 瀑布流；**重复访问以最新访问时间为准**（服务端去重置顶）
   - 状态：加载中骨架屏（`_SkeletonGrid`）、失败重试（`_FavRetry`）、空态（`_EmptyFavorites`，图标 `history_rounded` +「还没有浏览历史」）
   - **清空按钮**：历史列表非空时右上角「清空历史」文字按钮（`kDanger`），点击弹确认框 → `POST clear=1` 服务端清空 → 本地列表清空
-  - 交互：点击卡片进帖子详情（内容区覆盖）；从详情返回后自动刷新浏览历史（新的浏览置顶）
+  - 交互：点击卡片进帖子详情（内容区覆盖）；从详情返回后自动刷新浏览历史（新的浏览置顶）；**鼠标右键卡片**弹上下文菜单（`showMenu`，鼠标位置弹出）：
+    - 收藏卡片右键 →「取消收藏」（走 `togglePostFavorite`，成功后从列表移除 + 提示）
+    - 历史卡片右键 →「删除该记录」（走 `deleteBrowseHistory`，服务端+本地移除 + 提示）
+  - 右键菜单样式：`showMenu`（`bgColor` 底、`kRadiusMd` 圆角）、菜单项 36 高 + 16px 图标 + 13px 文字；删除项用 `kDanger`
   - **刷新时机**：切到「历史」tab 首次加载；从其他 tab 切回个人中心时若历史 tab 未加载过则加载；清空/详情返回后即时刷新
 - **导航**：个人中心（`_currentIndex=1`）仍在左侧导航栏，页面标题「个人中心」
