@@ -350,7 +350,7 @@ for /R "${installDir}" %%f in (*.exe) do (
   )
 )
 rem 创建桌面快捷方式"耶熊"（带图标，Win10/11 通知提示显示 ICO 依赖快捷方式）
-powershell -NoProfile -Command "\$ws = New-Object -ComObject WScript.Shell; \$desktop = [Environment]::GetFolderPath('Desktop'); \$lnk = \$ws.CreateShortcut((Join-Path \$desktop '耶熊.lnk')); \$lnk.TargetPath = '${installDir}\${exeName}'; \$lnk.WorkingDirectory = '${installDir}'; \$lnk.IconLocation = '${installDir}\${exeName},0'; \$lnk.Save()"
+powershell -NoProfile -Command "\$ws = New-Object -ComObject WScript.Shell; \$desktop = [Environment]::GetFolderPath('Desktop'); \$lnk = \$ws.CreateShortcut((Join-Path \$desktop '${AppConfig.appName}.lnk')); \$lnk.TargetPath = '${installDir}\${exeName}'; \$lnk.WorkingDirectory = '${installDir}'; \$lnk.IconLocation = '${installDir}\${exeName},0'; \$lnk.Save()"
 rem 启动新 exe
 if defined NEW_EXE (
   start "" "%NEW_EXE%"

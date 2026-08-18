@@ -6,6 +6,7 @@ import 'package:silky_scroll/silky_scroll.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../core/api_client.dart';
+import '../core/app_config.dart';
 import '../core/app_theme.dart';
 import '../core/device_service.dart';
 import 'maintenance.dart';
@@ -163,7 +164,7 @@ class _LoginPageState extends State<LoginPage> {
               child: Opacity(
                 opacity: 0.5,
                 child: Image.asset(
-                  'assets/images/logo_white.png',
+                  AppConfig.assetLogoWhite,
                   width: 340,
                   height: 340,
                   fit: BoxFit.contain,
@@ -200,7 +201,7 @@ class _LoginPageState extends State<LoginPage> {
                             // ),
                             const SizedBox(height: 12),
                             Text(
-                              '耶熊',
+                              AppConfig.appName,
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 28,

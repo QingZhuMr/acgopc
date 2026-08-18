@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
+import '../core/app_config.dart';
 import '../widgets/notify.dart';
 import '../controllers/system_notifier.dart';
 
@@ -128,7 +129,7 @@ class NotificationCenter extends ChangeNotifier {
     // Windows 系统通知（Toast）：窗口被遮挡/托盘时也能看到，点击可跳转帖子
     SystemNotifier.instance.show(
       title: title,
-      subtitle: '耶熊',
+      subtitle: AppConfig.appName,
       body: body,
       onClick: postId > 0 ? () => _openPost(postId, postContent) : null,
     );
@@ -163,7 +164,7 @@ class NotificationCenter extends ChangeNotifier {
     // Windows 系统通知（Toast）
     SystemNotifier.instance.show(
       title: title,
-      subtitle: '耶熊',
+      subtitle: AppConfig.appName,
       body: body,
       onClick: fromUid > 0
           ? () => _openUserProfile(fromUid, fromName, fromAvatar)

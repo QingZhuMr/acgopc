@@ -62,7 +62,7 @@ class AppService {
         final res = await Process.run('powershell', [
           '-NoProfile',
           '-Command',
-          '(Get-Process -Name Yeahbear -ErrorAction SilentlyContinue).Count',
+          '(Get-Process -Name ${AppConfig.appNameEn} -ErrorAction SilentlyContinue).Count',
         ]);
         count = int.tryParse(res.stdout.toString().trim()) ?? 0;
       } else {
@@ -165,7 +165,7 @@ class AppService {
       final asset = isMac ? AppConfig.assetLogo : AppConfig.assetTrayIcon;
       final data = await rootBundle.load(asset);
       final tmp = Directory.systemTemp;
-      final f = File('${tmp.path}${Platform.pathSeparator}acgo_tray.${isMac ? 'png' : 'ico'}');
+      final f = File('${tmp.path}${Platform.pathSeparator}${AppConfig.appNameEn}_tray.${isMac ? 'png' : 'ico'}');
       await f.writeAsBytes(data.buffer.asUint8List(), flush: true);
       return f;
     } catch (_) {

@@ -212,7 +212,7 @@ class _PublishPostPageState extends State<PublishPostPage> {
       await PostDraftStore.instance.clear();
       final postId = (json['data']?['id'] as num?)?.toInt() ?? 0;
       if (!mounted) return;
-      NotifyStack.success('发布成功', title: '耶熊');
+      NotifyStack.success('发布成功', title: AppConfig.appName);
       if (postId > 0) {
         // 直接跳转到新帖子的详情页（替换发布页），详情页返回时回到广场页
         final brief = <String, dynamic>{

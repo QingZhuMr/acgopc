@@ -30,6 +30,9 @@ abstract final class AppConfig {
   /// 应用通用 logo（asset 相对路径）
   static const String assetLogo = 'assets/images/app_logo.png';
 
+  /// 登录/注册页白色水印 logo（asset 相对路径）
+  static const String assetLogoWhite = 'assets/images/logo_white.png';
+
   /// 托盘图标（asset 相对路径，Windows 需 .ico）
   static const String assetTrayIcon = 'assets/images/app_icon.ico';
 

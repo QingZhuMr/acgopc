@@ -8,6 +8,7 @@ import 'package:silky_scroll/silky_scroll.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../core/api_client.dart';
+import '../core/app_config.dart';
 import '../core/app_theme.dart';
 import '../core/device_service.dart';
 import '../widgets/notify.dart';
@@ -199,7 +200,7 @@ class _RegisterPageState extends State<RegisterPage> {
               child: Opacity(
                 opacity: 0.5,
                 child: Image.asset(
-                  'assets/images/logo_white.png',
+                  AppConfig.assetLogoWhite,
                   width: 340,
                   height: 340,
                   fit: BoxFit.contain,
@@ -230,7 +231,7 @@ class _RegisterPageState extends State<RegisterPage> {
                             Align(
                               alignment: Alignment.center,
                               child: Text(
-                                '欢迎您和我们一起耶熊！',
+                                '欢迎您和我们一起${AppConfig.appName}！',
                                 style: TextStyle(
                                   fontSize: 24,
                                   fontWeight: FontWeight.w700,

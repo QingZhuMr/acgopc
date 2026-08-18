@@ -1,5 +1,6 @@
 import 'dart:collection';
 
+import '../core/app_config.dart';
 import '../controllers/system_notifier.dart';
 import '../widgets/notify.dart';
 import 'chat_store.dart';
@@ -104,7 +105,7 @@ class ChatNotifier {
     // Windows 系统通知（窗口被遮挡/最小化/在托盘也能看到，点击跳会话）
     await SystemNotifier.instance.show(
       title: nickname,
-      subtitle: '耶熊',
+      subtitle: AppConfig.appName,
       body: preview,
       onClick: () => _openChat(peerId),
     );
