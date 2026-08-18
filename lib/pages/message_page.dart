@@ -107,6 +107,7 @@ class MessagePageState extends State<MessagePage> {
   StreamSubscription<Map<String, dynamic>>? _chatClearSub;
   StreamSubscription<Map<String, dynamic>>? _typingSub;
   StreamSubscription<({int userId, bool online})>? _presenceSub;
+  StreamSubscription<void>? _reconnectedSub;
 
   /// 对方正在输入状态
   bool _peerTyping = false;
@@ -198,6 +199,13 @@ class MessagePageState extends State<MessagePage> {
       _peerTypingTimer = Timer(const Duration(seconds: 5), () {
         if (mounted) setState(() => _peerTyping = false);
       });
+    });
+    // WS 断线重连成功后：重新拉取好友列表，补偿断线期间丢失的 presence 事件
+    // （好友在断线窗口内上线/下线时收不到推送，需全量刷新一次在线状态）
+    _reconnectedSub = WsService.instance.onReconnectedStream.listen((_) {
+      if (!mounted) return;
+      // 断线期间 presence 事件丢失，重连后全量刷新好友在线状态
+      _loadFriends();
     });
     // 全局监听好友在线状态：刷新当前会话在线圆点 + 好友列表在线状态
     _presenceSub = WsService.instance.onPresence.listen((presence) {
@@ -302,6 +310,7 @@ class MessagePageState extends State<MessagePage> {
     _chatClearSub?.cancel();
     _typingSub?.cancel();
     _presenceSub?.cancel();
+    _reconnectedSub?.cancel();
     // 清理通知器状态（页面销毁时不再作为"当前会话/活跃"）
     ChatNotifier.instance.clearCurrentChat();
     ChatNotifier.instance.setPageActive(false);
@@ -460,7 +469,7 @@ class MessagePageState extends State<MessagePage> {
 
   /// 联系人列表（微信/QQ 风格）：一次拉全，按昵称拼音首字母分组排序
   Future<void> _loadFriends() async {
-    if (_loading) return;
+    if (_loading) return; // 正在加载中则跳过，避免并发
     setState(() {
       _loading = true;
       _loadFailed = false;

@@ -107,6 +107,11 @@ class WsService {
   /// 重连成功回调（登录态有效；用于聊天补发失败消息等）
   void Function()? onReconnected;
 
+  /// 重连成功事件流（曾断线后重连成功时触发，供 UI 补偿刷新，
+  /// 如好友在线状态——断线期间 presence 事件会丢失）
+  final _reconnectedCtrl = StreamController<void>.broadcast();
+  Stream<void> get onReconnectedStream => _reconnectedCtrl.stream;
+
   /// 是否已连接
   bool get isConnected => _channel != null && _sub != null;
 
@@ -185,9 +190,10 @@ class WsService {
       _disconnectSince = null; // 重连成功，清空断线计时
       _lastPongAt = DateTime.now();
       onConnectionChange?.call(true);
-      // 曾断线后重连成功：触发上层补偿（补发失败消息/增量同步）
+      // 曾断线后重连成功：触发上层补偿（补发失败消息/增量同步/UI 刷新）
       if (wasDisconnected) {
         onReconnected?.call();
+        _reconnectedCtrl.add(null);
       }
 
       // 启动心跳
