@@ -62,3 +62,19 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{a
 [Run]
 ; 安装完成后勾选启动
 Filename: "{app}\{#MyAppExeName}"; Description: "立即运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// 安装开始时自动结束旧版客户端进程（覆盖安装/升级场景）。
+// 配合 [Setup] 的 CloseApplications 双保险，确保 exe/dll 不被旧进程占用。
+procedure KillYeahbear;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/F /IM Yeahbear.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  KillYeahbear;
+end;

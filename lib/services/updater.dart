@@ -232,8 +232,7 @@ class Updater {
   /// 下载安装包到临时目录，并按包类型准备安装方式。
   ///
   /// 安装包类型由 URL 扩展名 / 平台推断：
-  /// - Windows `.exe`：直接启动安装器（安装器会等待当前进程退出）
-  /// - Windows `.zip`：解压到临时目录，替换运行目录下的可执行文件
+  /// - Windows `.exe`：直接启动安装器（Inno Setup 封装，安装时自动清除旧版进程）
   /// - macOS `.dmg` / `.pkg`：用 `open` 打开安装
   ///
   /// 返回安装准备就绪后需要执行的安装方式；失败返回 null。
@@ -264,22 +263,18 @@ class Updater {
   }
 
   /// 根据文件名推断安装方式：
-  /// 'exe' / 'zip' / 'dmg' / 'pkg' / 'apk'；未知扩展名按平台回退
-  String _installMethodFor(String fileName) {
+  /// 'exe' / 'dmg' / 'pkg' / 'apk'；zip 及其它格式不再支持，返回 null（按失败处理）
+  String? _installMethodFor(String fileName) {
     final lower = fileName.toLowerCase();
     if (lower.endsWith('.exe')) return 'exe';
-    if (lower.endsWith('.zip')) return 'zip';
     if (lower.endsWith('.dmg')) return 'dmg';
     if (lower.endsWith('.pkg')) return 'pkg';
     if (lower.endsWith('.apk')) return 'apk';
-    // 未知：按平台回退（win→exe，mac→pkg）
-    return Platform.isMacOS ? 'pkg' : 'exe';
+    return null;
   }
 
   /// 安装更新：
-  /// - exe：启动安装器（installer 等待进程退出后安装）→ 退出当前进程
-  /// - zip：弹不可关闭的"正在安装"提示 → 写独立安装脚本 → 启动脚本 →
-  ///   退出进程；脚本等主进程退出后自动解压覆盖安装目录并启动新 exe
+  /// - exe：启动安装器（Inno Setup 封装，安装时自动清除旧版进程）→ 退出当前进程
   /// - dmg/pkg（mac）：open 打开安装包 → 退出当前进程
   /// - apk：启动安装（移动端不适用，跳过）
   Future<bool> _installByMethod(String method) async {
@@ -299,9 +294,6 @@ class Updater {
           await Process.start(updateFile.path, [],
               mode: ProcessStartMode.detached);
           exit(0);
-        case 'zip':
-          if (!Platform.isWindows) return false;
-          return await _installZip(updateFile.path);
         case 'dmg':
         case 'pkg':
           if (!Platform.isMacOS) return false;
@@ -316,70 +308,4 @@ class Updater {
     }
   }
 
-  /// zip 更新（**仅 Windows 生效**）：静默覆盖安装。
-  /// 写独立安装脚本 → detached 启动 → 退出当前进程；
-  /// 脚本等旧进程退出后解压覆盖安装目录、启动新 exe、删除 zip 与脚本。
-  /// 全程无弹窗（静默）。
-  Future<bool> _installZip(String zipPath) async {
-    try {
-      // 1. 写安装脚本（等主进程退出 → 解压覆盖 → 启动新 exe → 清理安装文件）
-      final exePath = Platform.resolvedExecutable; // 当前运行的 exe 绝对路径
-      final installDir = File(exePath).parent.path; // 安装目录
-      final exeName = File(exePath).path.split(Platform.pathSeparator).last;
-      final scriptPath =
-          '${Directory.systemTemp.path}${Platform.pathSeparator}acgo_install.bat';
-      // 脚本：等待主进程退出（最多 30s）→ 解压 zip 覆盖安装目录 → 启动新 exe
-      // → 删除下载的 zip 与安装脚本（静默覆盖，无任何弹窗）
-      final script = '''
-@echo off
-setlocal
-rem 等待旧进程退出
-for /L %%i in (1,1,30) do (
-  tasklist /FI "IMAGENAME eq ${exeName}" 2>nul | find /I "${exeName}" >nul
-  if errorlevel 1 goto :done_wait
-  timeout /t 1 /nobreak >nul
-)
-:done_wait
-rem 静默解压 zip 覆盖安装目录
-powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${installDir}' -Force"
-rem 创建桌面快捷方式"耶熊"（带图标，Win10/11 通知提示显示 ICO 依赖快捷方式）
-powershell -NoProfile -Command "\$ws = New-Object -ComObject WScript.Shell; \$desktop = [Environment]::GetFolderPath('Desktop'); \$lnk = \$ws.CreateShortcut((Join-Path \$desktop '${AppConfig.appName}.lnk')); \$lnk.TargetPath = '${installDir}\${exeName}'; \$lnk.WorkingDirectory = '${installDir}'; \$lnk.IconLocation = '${installDir}\${exeName},0'; \$lnk.Save()"
-rem 启动新 exe：优先启动主 exe 固定路径（zip 解压到安装目录根目录，
-rem 覆盖安装后该路径即为新版本）；若主 exe 不存在（zip 带子目录结构）则递归找第一个 exe
-set "NEW_EXE="
-if exist "${installDir}\${exeName}" (
-  set "NEW_EXE=${installDir}\${exeName}"
-) else (
-  for /R "${installDir}" %%f in (*.exe) do (
-    set "NEW_EXE=%%f"
-    goto :launched
-  )
-)
-:launched
-if defined NEW_EXE (
-  start "" "%NEW_EXE%"
-)
-rem 静默删除下载的 zip 与安装脚本
-del /f /q "${zipPath}" >nul 2>&1
-del /f /q "%~f0" >nul 2>&1
-exit
-''';
-      final scriptFile = File(scriptPath);
-      await scriptFile.writeAsString(script, flush: true);
-
-      // 2. 后台静默启动安装脚本（PowerShell 隐藏窗口，避免闪黑窗）
-      await Process.start('powershell', [
-        '-NoProfile',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        'Start-Process -FilePath "$scriptPath" -WindowStyle Hidden',
-      ], mode: ProcessStartMode.detached);
-
-      // 3. 退出当前进程（脚本会接管后续，静默覆盖）
-      exit(0);
-    } catch (_) {
-      return false;
-    }
-  }
 }
