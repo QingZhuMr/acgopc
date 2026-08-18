@@ -98,6 +98,10 @@ class ChatService {
     plaintext = sanitizeUtf16(plaintext);
     final clientMsgId = forceClientMsgId ?? _genClientMsgId();
     final chatId = _chatId(_userId, receiverId);
+    // 自环/空 chat_id：不合法接收者，直接返回失败
+    if (chatId.isEmpty || _isSelfLoopChat(chatId)) {
+      return (msgId: 0, ok: false, error: '接收者无效');
+    }
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
     // 需要对方公钥
@@ -372,6 +376,8 @@ class ChatService {
     final chatId = (msg['chat_id']?.toString() ?? '').isNotEmpty
         ? msg['chat_id']!.toString()
         : _chatId(senderId, receiverId);
+    // 自环/空 chat_id 直接丢弃（杜绝脏数据产生）
+    if (chatId.isEmpty || _isSelfLoopChat(chatId)) return;
 
     // 解密（用本地私钥）
     String plaintext = '';
@@ -498,8 +504,11 @@ class ChatService {
         // 本地已删除的消息：跳过（多选删除为仅本设备删除，防止"复活"）
         final serverMsgId = (m['id'] as num?)?.toInt() ?? 0;
         if (await ChatStore.instance.isMsgDeleted(serverMsgId)) continue;
+        // 自环/空 chat_id 丢弃（杜绝脏数据产生）
+        final histChatId = _chatId(_userId, peerId);
+        if (histChatId.isEmpty || _isSelfLoopChat(histChatId)) continue;
         await ChatStore.instance.upsertMessage(
-          chatId: _chatId(_userId, peerId),
+          chatId: histChatId,
           msgId: serverMsgId,
           clientMsgId: m['client_msg_id']?.toString() ??
               'h_${m['id']}',
@@ -538,7 +547,23 @@ class ChatService {
     }
   }
 
-  String _chatId(int a, int b) => '${a < b ? a : b}_${a < b ? b : a}';
+  /// 会话 ID：min_max。**a==b（自己和自己）返回空串**——
+  /// 聊天双方不可能相同，自环 chat_id（如 `19_19`）是历史脏数据来源，
+  /// 调用方拿到空串必须拒绝写入。
+  String _chatId(int a, int b) {
+    if (a <= 0 || b <= 0 || a == b) return '';
+    return '${a < b ? a : b}_${a < b ? b : a}';
+  }
+
+  /// 自环 chat_id 判定：`min_max` 拆出双方 id 相同即脏（如 `19_19`）。
+  bool _isSelfLoopChat(String chatId) {
+    final parts = chatId.split('_');
+    if (parts.length != 2) return false;
+    final a = int.tryParse(parts[0]);
+    final b = int.tryParse(parts[1]);
+    if (a == null || b == null) return false;
+    return a == b;
+  }
 
   String _genClientMsgId() =>
       '${_userId}_${DateTime.now().millisecondsSinceEpoch}_${_rand4()}';
