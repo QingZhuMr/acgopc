@@ -3352,11 +3352,67 @@ class _UserProfilePageState extends State<UserProfilePage> {
   bool _failedPosts = false;
   bool _failedFavs = false;
 
+  /// 关注状态
+  bool _isFollowing = false;
+  bool _isMutual = false;
+  bool _followBusy = false;
+
   @override
   void initState() {
     super.initState();
     _loadPosts();
     _loadFavorites();
+    _loadFollowStatus();
+  }
+
+  /// 拉取关注状态（我是否关注他 / 是否互相关注）
+  Future<void> _loadFollowStatus() async {
+    try {
+      final resp = await ApiClient.instance
+          .getFollowStatus(widget.targetUid)
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (!mounted || json['code'] != 0) return;
+      final data = (json['data'] ?? {}) as Map<String, dynamic>;
+      setState(() {
+        _isFollowing = (data['is_following'] ?? false) == true;
+        _isMutual = (data['is_mutual'] ?? false) == true;
+      });
+    } catch (_) {
+      // 静默失败，不阻塞页面
+    }
+  }
+
+  /// 关注 / 取消关注（切换）
+  Future<void> _toggleFollow() async {
+    if (_followBusy) return;
+    setState(() => _followBusy = true);
+    try {
+      final resp = await ApiClient.instance
+          .toggleFollow(widget.targetUid)
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (!mounted) return;
+      if (json['code'] != 0) {
+        NotifyStack.warning(json['msg']?.toString() ?? '操作失败', title: '提示');
+        return;
+      }
+      final data = (json['data'] ?? {}) as Map<String, dynamic>;
+      setState(() {
+        _isFollowing = (data['is_following'] ?? false) == true;
+        _isMutual = (data['is_mutual'] ?? false) == true;
+      });
+      NotifyStack.success(
+        _isFollowing ? '已关注' : '已取消关注',
+        title: '提示',
+      );
+    } catch (_) {
+      if (mounted) {
+        NotifyStack.warning('操作失败，请稍后重试', title: '提示');
+      }
+    } finally {
+      if (mounted) setState(() => _followBusy = false);
+    }
   }
 
   Future<void> _loadPosts() async {
@@ -3439,6 +3495,55 @@ class _UserProfilePageState extends State<UserProfilePage> {
         _failedFavs = true;
       });
     }
+  }
+
+  /// 关注按钮（互相关注 → "互相关注"；已关注 → "已关注"；未关注 → "关注"）
+  Widget _buildFollowButton(Brightness b) {
+    final String label;
+    final Color bg;
+    final Color fg;
+    if (_isMutual) {
+      label = '互相关注';
+      bg = bgHoverColor(b);
+      fg = textColor(b);
+    } else if (_isFollowing) {
+      label = '已关注';
+      bg = bgHoverColor(b);
+      fg = textColor(b);
+    } else {
+      label = '关注';
+      bg = kPrimary;
+      fg = Colors.white;
+    }
+    return InkWell(
+      onTap: _followBusy ? null : _toggleFollow,
+      mouseCursor: SystemMouseCursors.click,
+      borderRadius: BorderRadius.circular(kRadiusBtn),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(kRadiusBtn),
+        ),
+        child: _followBusy
+            ? SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: fg,
+                ),
+              )
+            : Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: fg,
+                ),
+              ),
+      ),
+    );
   }
 
   /// 举报该用户
@@ -3622,6 +3727,9 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                 ],
                               ),
                             ),
+                            // 关注 / 已关注 按钮（互相关注显示"互相关注"）
+                            const SizedBox(width: 12),
+                            _buildFollowButton(b),
                           ],
                         ),
                       ),
