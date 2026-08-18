@@ -3173,8 +3173,14 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   },
                   mouseCursor: SystemMouseCursors.click,
                   hoverColor: bgHoverColor(b),
-                  child: Icon(Icons.arrow_back_ios_new_rounded,
-                      size: 16, color: textMutedColor(b)),
+                  child: Center(
+                    // 图标下移 1px，与 15px 标题文字视觉中线对齐（Material 箭头基线偏上）
+                    child: Transform.translate(
+                      offset: const Offset(0, 1),
+                      child: Icon(Icons.arrow_back_ios_new_rounded,
+                          size: 16, color: textMutedColor(b)),
+                    ),
+                  ),
                 ),
               ),
               Flexible(child: title),
