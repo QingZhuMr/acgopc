@@ -33,6 +33,9 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; 卸载时自动请求关闭正在运行的客户端进程（Restart Manager）
+CloseApplications=yes
+CloseApplicationsFilter=Yeahbear.exe
 
 [Languages]
 Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
@@ -40,6 +43,15 @@ Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 [Files]
 ; 打包 Flutter Release 全量产物（exe + dll + data）
 Source: "build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[UninstallRun]
+; 卸载前强制结束客户端进程（防止 exe/dll 被占用导致删不干净）。
+; 找不到进程时 taskkill 报错，用 cmd 包裹忽略错误继续卸载。
+Filename: "{cmd}"; Parameters: "/c taskkill /F /IM Yeahbear.exe >nul 2>&1"; Flags: runhidden
+
+[UninstallDelete]
+; 卸载最后兜底：清空整个安装目录（含卸载后残留的日志/缓存文件）
+Type: filesandordirs; Name: "{app}"
 
 [Icons]
 ; 桌面快捷方式"耶熊"（当前用户桌面）
