@@ -66,11 +66,17 @@ class ChatService {
     // 需要对方公钥
     var pub = peerPublicKey;
     if (pub == null) {
-      final keys = await ApiClient.instance.getChatKeys([receiverId]);
-      final json = ApiClient.safeJsonDecode(keys.body);
-      if (json['code'] == 0) {
-        final keyMap = (json['data'] ?? {})['keys'] as Map? ?? {};
-        pub = keyMap['$receiverId']?.toString();
+      try {
+        final keys = await ApiClient.instance
+            .getChatKeys([receiverId])
+            .timeout(const Duration(seconds: 8));
+        final json = ApiClient.safeJsonDecode(keys.body);
+        if (json['code'] == 0) {
+          final keyMap = (json['data'] ?? {})['keys'] as Map? ?? {};
+          pub = keyMap['$receiverId']?.toString();
+        }
+      } catch (_) {
+        pub = null; // 拉公钥失败，走下方"未开启"分支标记失败
       }
     }
     if (pub == null || pub.isEmpty) {

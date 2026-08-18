@@ -50,6 +50,9 @@ class _MessagePageState extends State<MessagePage> {
   /// 会话好友公钥（发消息用）
   String? _peerPublicKey;
 
+  /// 对方是否在线（绿点/灰点）
+  bool _peerOnline = false;
+
   final TextEditingController _inputCtrl = TextEditingController();
   bool _sending = false;
 
@@ -163,6 +166,7 @@ class _MessagePageState extends State<MessagePage> {
       _selectedFriend = friend;
       _messages = [];
       _peerPublicKey = null;
+      _peerOnline = (friend['online'] ?? false) == true;
     });
     _chatSub?.cancel();
     // 监听 WS 新消息：刷新会话列表 + 当前会话重新加载
@@ -698,15 +702,17 @@ class _MessagePageState extends State<MessagePage> {
                   color: textColor(b),
                 ),
               ),
-              const Spacer(),
-              if (_peerPublicKey == null)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Text(
-                    '对方暂未开启聊天',
-                    style: TextStyle(fontSize: 12, color: textMutedColor(b)),
-                  ),
+              // 在线状态小圆点：绿=在线 灰=离线
+              const SizedBox(width: 6),
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _peerOnline ? kSuccess : textFaintColor(b),
                 ),
+              ),
+              const Spacer(),
             ],
           ),
         ),
