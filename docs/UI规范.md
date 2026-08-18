@@ -335,7 +335,8 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 
 ## 10.2 他人个人中心页
 
-- **入口**（`pages/user_profile_page.dart`，内容区覆盖打开，`embedded: true`，保留左侧导航栏）：帖子详情页**点击他人头像/昵称**、评论里**@昵称（含楼中楼）**进入。由 `_HomePageState.openUserProfile(uid, nickname, avatar)` 实现。
+- **入口**（`main.dart` 内 `UserProfilePage`，内容区覆盖打开，`embedded: true`，保留左侧导航栏）：帖子详情页**点击他人头像/昵称**、评论里**@昵称（含楼中楼）**进入。由 `_HomePageState.openUserProfile(uid, nickname, avatar)` 实现。
+- **标题栏**：与帖子详情页等**二级页面一致**（embedded：高 48、水平 8px、macOS 风格返回按钮 40x40/`kRadiusMd` 圆角/`arrow_back_ios_new_rounded` 16px、标题 15px/w600）；**标题 = 「昵称的主页」**；右上角省略号 `BubbleMenu` = 举报。
 - **内容**：用户信息卡（头像 56px 圆形 + 昵称 18px/w600）+ **动态/收藏双 tab**（胶囊切换，`primarySoft` 底选中 + `kPrimary` 字）。
   - 数据源：`GET /api/post/myPosts`、`/api/post/favorites` 带 `target_uid`。
   - **隐私占位**：对方将动态/收藏设为仅自己（`visible=0`）时，展示锁图标 +「对方将「动态/收藏」设为仅自己可见」。
