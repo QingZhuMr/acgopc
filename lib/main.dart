@@ -464,14 +464,15 @@ class _HomePageState extends State<HomePage> {
   /// 在内容区打开帖子（WS 推送/简单跳转用，保留左侧导航栏）
   void openPostInContent(int postId, String postContent, int? commentId) {
     if (!mounted) return;
-    _recordBrowseHistory(postId);
+    // 浏览历史由 _showPostOverlay 统一记录（此处走 _showPostFromNoticeOverlay，
+    // 该方法内部最终也会调用 _showPostOverlay）
     _showPostFromNoticeOverlay(postId, postContent, commentId);
   }
 
   /// 在内容区打开帖子（完整帖子数据，保留左侧导航栏）
   void openPostFullInContent(Map<String, dynamic> post, int id) {
     if (!mounted) return;
-    _recordBrowseHistory(id);
+    // 浏览历史由 _showPostOverlay 统一记录
     _showPostOverlay(post, id);
   }
 
@@ -586,7 +587,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// 在内容区显示帖子详情覆盖（保留导航栏）
+  ///
+  /// 所有打开帖子详情的最终入口（广场卡片、个人中心动态/收藏/历史、
+  /// 他人主页、WS 推送/通知）——统一在这里记录浏览历史。
   void _showPostOverlay(Map<String, dynamic> post, int id) {
+    _recordBrowseHistory(id);
     final currentUid = _resolveUid(widget.user);
     setState(() {
       _macOverlay = PostDetailPage(
@@ -639,6 +644,7 @@ class _HomePageState extends State<HomePage> {
 
   /// 从通知打开帖子，用内容区覆盖（保留左侧导航栏，可定位到评论）
   void _showPostFromNoticeOverlay(int postId, String postContent, int? commentId) {
+    _recordBrowseHistory(postId);
     final currentUid = _resolveUid(widget.user);
     setState(() {
       _macOverlay = PostDetailPage(
