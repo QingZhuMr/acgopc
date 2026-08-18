@@ -603,9 +603,21 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  /// 在内容区打开他人个人中心（保留左侧导航栏，不遮挡）
+  /// 打开个人中心
+  ///
+  /// 目标用户 = 自己：切换左侧导航到「我的」tab（并清空内容区覆盖层）；
+  /// 目标用户 = 他人：内容区覆盖打开他人主页（保留左侧导航栏，不遮挡）。
   void openUserProfile(int uid, String nickname, String avatar) {
     if (!mounted || uid <= 0) return;
+    final currentUid = _resolveUid(widget.user);
+    if (uid == currentUid) {
+      // 自己 → 切到「我的」页面
+      setState(() {
+        _macOverlay = null;
+        _currentIndex = 1;
+      });
+      return;
+    }
     setState(() {
       _macOverlay = UserProfilePage(
         targetUid: uid,
@@ -2953,6 +2965,21 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final b = Theme.of(context).brightness;
     return _PageScaffold(
       title: widget.nickname,
+      // 返回按钮在标题左侧（内容区覆盖模式下显示）
+      leading: widget.embedded
+          ? IconButton(
+              tooltip: '返回',
+              icon: Icon(Icons.arrow_back_ios_new_rounded,
+                  size: 16, color: textMutedColor(b)),
+              onPressed: () {
+                if (widget.onBack != null) {
+                  widget.onBack!();
+                } else {
+                  Navigator.of(context).maybePop();
+                }
+              },
+            )
+          : null,
       actions: [
         // 右上角省略号：气泡弹出举报
         BubbleMenu(
@@ -2970,23 +2997,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
             child: Icon(Icons.more_horiz, size: 22, color: textColor(b)),
           ),
         ),
-        if (widget.embedded)
-          // 内容区覆盖模式下显示返回按钮（紧跟省略号）
-          Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: IconButton(
-              tooltip: '返回',
-              icon: Icon(Icons.arrow_back_ios_new_rounded,
-                  size: 16, color: textMutedColor(b)),
-              onPressed: () {
-                if (widget.onBack != null) {
-                  widget.onBack!();
-                } else {
-                  Navigator.of(context).maybePop();
-                }
-              },
-            ),
-          ),
       ],
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -3794,9 +3804,15 @@ class _ThemeOption extends StatelessWidget {
 class _PageScaffold extends StatelessWidget {
   final String title; // 页面标题
   final Widget child; // 页面内容
+  final Widget? leading; // 标题左侧按钮（如返回按钮）
   final List<Widget>? actions; // 标题栏右侧按钮
 
-  const _PageScaffold({required this.title, required this.child, this.actions});
+  const _PageScaffold({
+    required this.title,
+    required this.child,
+    this.leading,
+    this.actions,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -3804,7 +3820,7 @@ class _PageScaffold extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 页面标题 + 右侧按钮
+        // 页面标题 + 左侧/右侧按钮
         // 间距规范：Win 端标题距顶 5px（比 macOS 的 20 上移 15px）；
         // 标题与下一行内容间距 20px（本行 bottom 4 + 内容区自带顶部 padding 16 = 20）；
         // Win 顶栏现为 40px，标题距窗口顶 = 40 + 5 = 45px
@@ -3813,6 +3829,7 @@ class _PageScaffold extends StatelessWidget {
               24, Platform.isWindows ? 5 : 20, 24, 4),
           child: Row(
             children: [
+              if (leading != null) ...[leading!, const SizedBox(width: 8)],
               Expanded(
                 child: Text(
                   title,
