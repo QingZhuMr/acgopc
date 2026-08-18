@@ -429,6 +429,43 @@ class ApiClient {
     );
   }
 
+  /// 获取隐私设置（业务接口：签名 + 设备密钥）
+  ///
+  /// 返回 data：{ privacy_posts: 1|0, privacy_favorites: 1|0 }（1公开 0仅自己）
+  Future<http.Response> getPrivacy() {
+    final path = '/user/privacy';
+    return http.get(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
+  /// 保存隐私设置（业务接口，POST x-www-form-urlencoded）
+  ///
+  /// privacyPosts / privacyFavorites 可只传其一（省略的保持原值），
+  /// 传 true=公开、false=仅自己。返回保存后的完整配置。
+  Future<http.Response> savePrivacy({
+    bool? privacyPosts,
+    bool? privacyFavorites,
+  }) {
+    final path = '/user/privacy';
+    final body = <String, String>{};
+    if (privacyPosts != null) body['privacy_posts'] = privacyPosts ? '1' : '0';
+    if (privacyFavorites != null) {
+      body['privacy_favorites'] = privacyFavorites ? '1' : '0';
+    }
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: body,
+    );
+  }
+
   /// 上传头像（业务接口，multipart/form-data 文件字段 avatar）
   ///
   /// 服务端保存后返回可访问的相对路径 avatar（如 /static/avatar/u1_xxx.png）。

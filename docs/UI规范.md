@@ -330,7 +330,8 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 ## 10. 个人中心规范
 
 - **右上角省略号**（`Icons.more_horiz`，`BubbleMenu` 气泡菜单）：点击弹出更多操作气泡 —— 「隐私设置」「更改密码」「退出账户」三项，**隐私设置在最上方**。均从此菜单进入，**页面主体不再单独放账户安全卡**
-- **隐私设置页**（`pages/privacy_settings_page.dart`，由省略号菜单「隐私设置」进入）：以 **内容区覆盖模式**打开（通过 `_HomePageState._macOverlay`，`embedded: true`），**保留左侧导航栏、不遮挡整个窗口**。内嵌标题栏与发布页/详情页一致（高 48、标题 15px/w600、macOS 风格返回按钮），顶部距离由宿主 `_TitleBar` 承担；内容区可滚动用 `SilkyListView`。**全屏模式**（`embedded: false`）遵守双端顶距规范（Win 顶距 5px / macOS 20px、标题 20px/w600、左右 24px）
+- **隐私设置页**（`pages/privacy_settings_page.dart`，由省略号菜单「隐私设置」进入）：以 **内容区覆盖模式**打开（通过 `_HomePageState._macOverlay`，`embedded: true`），**保留左侧导航栏、不遮挡整个窗口**。内嵌标题栏与发布页/详情页一致（高 48、标题 15px/w600、macOS 风格返回按钮），顶部距离由宿主 `_TitleBar` 承担；内容区可滚动用 `SilkyListView`。**全屏模式**（`embedded: false`）遵守双端顶距规范（Win 顶距 5px / macOS 20px、标题 20px/w600、左右 24px）。
+  - **主页可见性**：一张卡片（`bgHoverColor` + `kRadiusMd` 圆角）内含两项开关（动态/收藏），每项为自绘行：左侧图标（36x36 `bgColor` 圆角 `kRadiusSm` 容器 + `kPrimary` 图标）、标题（14px/w600）+ 副标题（12px `textMutedColor`）、右侧 Material `Switch`（`activeThumbColor: kPrimary`，保存中禁用）。**开关即改即存**（调 `user/privacy`），失败回滚并提示。对应后端 `privacy_posts`/`privacy_favorites`（1公开 0仅自己），为访问他人主页功能提供可见性依据。
 
 ## 10.1 气泡菜单（省略号弹层）规范
 
