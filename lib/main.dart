@@ -3784,50 +3784,47 @@ class _UserProfilePageState extends State<UserProfilePage> {
       ),
     );
     if (widget.embedded) {
+      // 布局与"我的"页 _PageScaffold 完全一致：Expanded(title) + 末尾省略号。
+      // width: double.infinity 强制撑满 cross axis —— 根因修复：原 SizedBox 未设宽，
+      // 在 Column(crossAxisAlignment: start) 下收缩为内容宽 → Row 不撑满 →
+      // Expanded/Spacer 失效 → 省略号紧跟标题（看起来"前移"，与弹出层无关）。
       return SizedBox(
         height: 48,
-        width: double.infinity, // 显式撑满 cross axis，防止父约束 loose 时 Row 收缩为内容宽
+        width: double.infinity,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             mainAxisSize: MainAxisSize.max,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // 左侧：返回按钮 + 标题（同一组靠左）
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // macOS 风格返回按钮
-                  SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(kRadiusMd),
-                      onTap: () {
-                        if (widget.onBack != null) {
-                          widget.onBack!();
-                        } else {
-                          Navigator.of(context).maybePop();
-                        }
-                      },
-                      mouseCursor: SystemMouseCursors.click,
-                      hoverColor: bgHoverColor(b),
-                      child: Center(
-                        child: Transform.translate(
-                          offset: const Offset(0, 1),
-                          child: Icon(Icons.arrow_back_ios_new_rounded,
-                              size: 16, color: textMutedColor(b)),
-                        ),
-                      ),
+              // macOS 风格返回按钮
+              SizedBox(
+                width: 40,
+                height: 40,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(kRadiusMd),
+                  onTap: () {
+                    if (widget.onBack != null) {
+                      widget.onBack!();
+                    } else {
+                      Navigator.of(context).maybePop();
+                    }
+                  },
+                  mouseCursor: SystemMouseCursors.click,
+                  hoverColor: bgHoverColor(b),
+                  child: Center(
+                    // 图标下移 1px，与 15px 标题文字视觉中线对齐（Material 箭头基线偏上）
+                    child: Transform.translate(
+                      offset: const Offset(0, 1),
+                      child: Icon(Icons.arrow_back_ios_new_rounded,
+                          size: 16, color: textMutedColor(b)),
                     ),
                   ),
-                  const SizedBox(width: 4),
-                  Flexible(child: title),
-                ],
+                ),
               ),
-              // 右侧：省略号（spaceBetween 强制靠右）
+              const SizedBox(width: 4),
+              // 标题占满中间空隙（同 _PageScaffold），省略号被推到最右
+              Expanded(child: title),
               // 右上角省略号：气泡弹出举报
               BubbleMenu(
                 width: 140,
