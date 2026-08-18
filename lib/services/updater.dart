@@ -213,15 +213,19 @@ class Updater {
       persistent: true,
       onDismiss: null,
     ));
-    final method = await _downloadAndPrepare(info);
-    if (method != null) {
+    final prepared = await _downloadAndPrepare(info);
+    if (prepared != null) {
       NotifyStack.instance.dismiss('update_progress_${info.version}');
       NotifyStack.instance.dismiss('update_${info.version}');
-      NotifyStack.success('更新包已就绪，即将重启…');
-      // 延迟一点让用户看到成功提示，然后安装
-      final installMethod = method;
+      NotifyStack.success('更新包已就绪，正在打开安装器…');
+      // 延迟一点让用户看到成功提示，然后启动安装器
+      final method = prepared.method;
+      final file = prepared.file;
       Future.delayed(const Duration(seconds: 2), () async {
-        await _installByMethod(installMethod);
+        final ok = await _installByMethod(method, file);
+        if (!ok) {
+          NotifyStack.warning('无法启动安装器，请稍后重试');
+        }
       });
     } else {
       NotifyStack.instance.dismiss('update_progress_${info.version}');
@@ -235,19 +239,22 @@ class Updater {
   /// - Windows `.exe`：直接启动安装器（Inno Setup 封装，安装时自动清除旧版进程）
   /// - macOS `.dmg` / `.pkg`：用 `open` 打开安装
   ///
-  /// 返回安装准备就绪后需要执行的安装方式；失败返回 null。
-  Future<String?> _downloadAndPrepare(UpdateInfo info) async {
+  /// 返回（安装方式 + 已下载文件）；失败返回 null。
+  Future<({String method, File file})?> _downloadAndPrepare(
+      UpdateInfo info) async {
     try {
       final resp = await http.get(Uri.parse(info.downloadUrl));
       if (resp.statusCode != 200) return null;
       final bytes = resp.bodyBytes;
       if (bytes.isEmpty) return null;
-      final tmp = Directory.systemTemp;
       final fileName = _fileNameFromUrl(info.downloadUrl);
+      final method = _installMethodFor(fileName);
+      if (method == null) return null; // 不支持的格式，按失败处理
+      final tmp = Directory.systemTemp;
       final outFile =
           File('${tmp.path}${Platform.pathSeparator}acgo_update_$fileName');
       await outFile.writeAsBytes(bytes, flush: true);
-      return _installMethodFor(fileName);
+      return (method: method, file: outFile);
     } catch (_) {
       return null;
     }
@@ -273,21 +280,16 @@ class Updater {
     return null;
   }
 
-  /// 安装更新：
+  /// 安装更新：直接启动下载好的安装包文件。
   /// - exe：启动安装器（Inno Setup 封装，安装时自动清除旧版进程）→ 退出当前进程
   /// - dmg/pkg（mac）：open 打开安装包 → 退出当前进程
   /// - apk：启动安装（移动端不适用，跳过）
-  Future<bool> _installByMethod(String method) async {
-    final tmp = Directory.systemTemp;
-    final candidates = Directory(tmp.path)
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.contains('acgo_update_'))
-        .toList();
-    if (candidates.isEmpty) return false;
-    final updateFile = candidates.first;
-
+  ///
+  /// 注意：必须使用 [_downloadAndPrepare] 刚下载的文件，不得再扫描临时目录
+  /// （残留的旧安装包会干扰，导致启动错误文件/弹不出安装器）。
+  Future<bool> _installByMethod(String method, File updateFile) async {
     try {
+      if (!updateFile.existsSync()) return false;
       switch (method) {
         case 'exe':
           if (!Platform.isWindows) return false;

@@ -2,10 +2,10 @@
 ; Yeahbear（耶熊）PC 客户端 安装脚本（Inno Setup 6）
 ; 打包命令：
 ;   ISCC.exe yeahbear_setup.iss
-; 产物：build\installer\Yeahbear_Setup_0.1.2.exe
+; 产物：build\installer\Yeahbear_Setup_0.1.3.exe
 ; ============================================================
 #define MyAppName "耶熊"
-#define MyAppVersion "0.1.2"
+#define MyAppVersion "0.1.3"
 #define MyAppExeName "Yeahbear.exe"
 #define MyAppPublisher "Yeahbear"
 
