@@ -373,6 +373,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - **浏览历史**（「历史」tab，个人中心最右侧）：**服务端跨设备同步**（`user.browse_history` JSON 字段，**最多 120 条**，按浏览时间倒序）：
   - 数据源：`GET /api/user/browseHistory`（全量一次拉取，无分页）；记录：打开帖子详情时 `POST post_id`（静默上报，去重置顶限 120）
   - 布局：复用瀑布流 `_MasonryGrid`/`_PostCard`，同动态/收藏列数与封面高度算法
+  - **按访问日期分组**：「今天 / 昨天 / 更早」三组（自然日判定与 `formatRelativeTime` 一致），每组标题 13px/w600 `textMutedColor` + 瀑布流；**重复访问以最新访问时间为准**（服务端去重置顶）
   - 状态：加载中骨架屏（`_SkeletonGrid`）、失败重试（`_FavRetry`）、空态（`_EmptyFavorites`，图标 `history_rounded` +「还没有浏览历史」）
   - **清空按钮**：历史列表非空时右上角「清空历史」文字按钮（`kDanger`），点击弹确认框 → `POST clear=1` 服务端清空 → 本地列表清空
   - 交互：点击卡片进帖子详情（内容区覆盖）；从详情返回后自动刷新浏览历史（新的浏览置顶）
