@@ -3815,8 +3815,9 @@ class _UserProfilePageState extends State<UserProfilePage> {
                   ),
                 ),
               ),
-              Flexible(child: title),
-              const Spacer(),
+              // title 用 Expanded 占满中间空隙，省略号稳定靠右。
+              // （原 Flexible+Spacer 在部分路径/约束下 Spacer 可能失效导致省略号靠左）
+              Expanded(child: title),
               // 右上角省略号：气泡弹出举报
               BubbleMenu(
                 width: 140,
