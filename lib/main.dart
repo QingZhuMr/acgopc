@@ -3138,45 +3138,104 @@ class _UserProfilePageState extends State<UserProfilePage> {
     );
   }
 
+  /// 标题栏：与帖子详情页等二级页面一致（embedded：高 48、水平 8px、
+  /// macOS 风格返回按钮 40x40/kRadiusMd 圆角/arrow_back_ios_new_rounded 16px、
+  /// 标题 15px/w600），标题为「昵称的主页」；右上角省略号气泡 = 举报
+  Widget _buildTitleBar(Brightness b, BuildContext context) {
+    final title = Text(
+      '${widget.nickname}的主页',
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+        color: textColor(b),
+      ),
+    );
+    if (widget.embedded) {
+      return SizedBox(
+        height: 48,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: [
+              // macOS 风格返回按钮
+              SizedBox(
+                width: 40,
+                height: 40,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(kRadiusMd),
+                  onTap: () {
+                    if (widget.onBack != null) {
+                      widget.onBack!();
+                    } else {
+                      Navigator.of(context).maybePop();
+                    }
+                  },
+                  mouseCursor: SystemMouseCursors.click,
+                  hoverColor: bgHoverColor(b),
+                  child: Icon(Icons.arrow_back_ios_new_rounded,
+                      size: 16, color: textMutedColor(b)),
+                ),
+              ),
+              Flexible(child: title),
+              const Spacer(),
+              // 右上角省略号：气泡弹出举报
+              BubbleMenu(
+                width: 140,
+                items: [
+                  BubbleMenuItem(
+                    label: '举报',
+                    icon: Icons.flag_outlined,
+                    color: kDanger,
+                    onTap: _reportUser,
+                  ),
+                ],
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child:
+                      Icon(Icons.more_horiz, size: 22, color: textColor(b)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // 全屏模式（理论不触发，他人主页默认 embedded）
+    return Padding(
+      padding: EdgeInsets.fromLTRB(24, Platform.isWindows ? 5 : 20, 24, 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 36,
+            height: 36,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(kRadiusMd),
+              onTap: () => Navigator.of(context).pop(),
+              mouseCursor: SystemMouseCursors.click,
+              hoverColor: bgHoverColor(b),
+              child: Icon(Icons.arrow_back,
+                  size: 18, color: textMutedColor(b)),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(child: title),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
-    return _PageScaffold(
-      title: widget.nickname,
-      // 返回按钮在标题左侧（内容区覆盖模式下显示）
-      leading: widget.embedded
-          ? IconButton(
-              tooltip: '返回',
-              icon: Icon(Icons.arrow_back_ios_new_rounded,
-                  size: 16, color: textMutedColor(b)),
-              onPressed: () {
-                if (widget.onBack != null) {
-                  widget.onBack!();
-                } else {
-                  Navigator.of(context).maybePop();
-                }
-              },
-            )
-          : null,
-      actions: [
-        // 右上角省略号：气泡弹出举报
-        BubbleMenu(
-          width: 140,
-          items: [
-            BubbleMenuItem(
-              label: '举报',
-              icon: Icons.flag_outlined,
-              color: kDanger,
-              onTap: _reportUser,
-            ),
-          ],
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: Icon(Icons.more_horiz, size: 22, color: textColor(b)),
-          ),
-        ),
-      ],
-      child: LayoutBuilder(
+    return Scaffold(
+      backgroundColor: bgColor(b),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildTitleBar(b, context),
+          Expanded(
+            child: LayoutBuilder(
         builder: (context, constraints) {
           return NotificationListener<ScrollNotification>(
             onNotification: (n) {
@@ -3274,9 +3333,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
                 ),
               ),
             ),
-          );
-        },
+            );
+          },
+        ),
       ),
+      ],
+    ),
     );
   }
 
@@ -3982,15 +4044,9 @@ class _ThemeOption extends StatelessWidget {
 class _PageScaffold extends StatelessWidget {
   final String title; // 页面标题
   final Widget child; // 页面内容
-  final Widget? leading; // 标题左侧按钮（如返回按钮）
   final List<Widget>? actions; // 标题栏右侧按钮
 
-  const _PageScaffold({
-    required this.title,
-    required this.child,
-    this.leading,
-    this.actions,
-  });
+  const _PageScaffold({required this.title, required this.child, this.actions});
 
   @override
   Widget build(BuildContext context) {
@@ -3998,7 +4054,7 @@ class _PageScaffold extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 页面标题 + 左侧/右侧按钮
+        // 页面标题 + 右侧按钮
         // 间距规范：Win 端标题距顶 5px（比 macOS 的 20 上移 15px）；
         // 标题与下一行内容间距 20px（本行 bottom 4 + 内容区自带顶部 padding 16 = 20）；
         // Win 顶栏现为 40px，标题距窗口顶 = 40 + 5 = 45px
@@ -4007,7 +4063,6 @@ class _PageScaffold extends StatelessWidget {
               24, Platform.isWindows ? 5 : 20, 24, 4),
           child: Row(
             children: [
-              if (leading != null) ...[leading!, const SizedBox(width: 8)],
               Expanded(
                 child: Text(
                   title,
