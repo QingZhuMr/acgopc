@@ -28,6 +28,9 @@ class ChatStore {
   /// 当前已打开连接所属用户 id（用于判断连接是否匹配当前账号）
   int _dbUid = 0;
 
+  /// sqflite ffi factory 是否已初始化（桌面端全局唯一，重复设置会打印警告）
+  static bool _ffiInitDone = false;
+
   /// 未读数变化通知（左侧导航消息角标 / 会话列表刷新监听）。
   /// 每次未读数可能变化时 +1，监听方自行重新查询汇总。
   final ValueNotifier<int> chatUnreadTick = ValueNotifier<int>(0);
@@ -202,10 +205,14 @@ class ChatStore {
         await old.close();
       } catch (_) {}
     }
-    // 桌面端（Windows/macOS/Linux）用 ffi 实现；移动端用原生
+    // 桌面端（Windows/macOS/Linux）用 ffi 实现；移动端用原生。
+    // 只初始化一次（sqflite 默认 factory 全局生效，重复设置会打印警告）
     if (Platform.isWindows || Platform.isLinux) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
+      if (!_ffiInitDone) {
+        _ffiInitDone = true;
+        sqfliteFfiInit();
+        databaseFactory = databaseFactoryFfi;
+      }
     }
     // 未登录：回退公共库（正常流程登录后即切专属库，此处仅兜底）
     if (_uid <= 0) {
