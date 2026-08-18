@@ -1440,10 +1440,14 @@ class _PostCard extends StatefulWidget {
   final double coverHeight;
   final VoidCallback onTap;
 
+  /// 右键菜单回调（参数：右键全局坐标；null 不监听右键）
+  final void Function(Offset globalPos)? onContextMenu;
+
   const _PostCard({
     required this.post,
     required this.coverHeight,
     required this.onTap,
+    this.onContextMenu,
   });
 
   @override
@@ -1477,7 +1481,12 @@ class _PostCardState extends State<_PostCard> {
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      child: AnimatedScale(
+      child: GestureDetector(
+        // 鼠标右键（Windows/macOS 均触发）
+        onSecondaryTapDown: widget.onContextMenu != null
+            ? (d) => widget.onContextMenu!(d.globalPosition)
+            : null,
+        child: AnimatedScale(
         scale: _pressed ? 0.97 : (_hover ? 1.02 : 1.0),
         duration: const Duration(milliseconds: 160),
         curve: Curves.easeOut,
@@ -1578,6 +1587,7 @@ class _PostCardState extends State<_PostCard> {
               ),
             ),
           ),
+        ),
         ),
       ),
     );
@@ -1793,11 +1803,15 @@ class _MasonryGrid extends StatelessWidget {
   final double Function(Map<String, dynamic>) coverHeight;
   final void Function(Map<String, dynamic>) onPostTap;
 
+  /// 右键回调（收藏/历史 tab 弹出操作菜单；参数：帖子 + 右键全局坐标；null 不监听）
+  final void Function(Map<String, dynamic> post, Offset globalPos)? onContextMenu;
+
   const _MasonryGrid({
     required this.posts,
     required this.columns,
     required this.coverHeight,
     required this.onPostTap,
+    this.onContextMenu,
   });
 
   @override
@@ -1841,6 +1855,9 @@ class _MasonryGrid extends StatelessWidget {
                         post: p,
                         coverHeight: coverHeight(p),
                         onTap: () => onPostTap(p),
+                        onContextMenu: onContextMenu != null
+                            ? (pos) => onContextMenu!(p, pos)
+                            : null,
                       ),
                     ),
                   ),
@@ -2236,6 +2253,7 @@ class _ProfileViewState extends State<_ProfileView> {
                         columns: _favColumns(constraints.maxWidth),
                         coverHeight: _favCoverHeight,
                         onPostTap: (p) => _openFavPost(p),
+                        onContextMenu: (p, pos) => _favContextMenu(p, pos),
                       ),
                     if (_favLoadingMore)
                       const Padding(
@@ -2574,6 +2592,7 @@ class _ProfileViewState extends State<_ProfileView> {
           columns: _favColumns(constraints.maxWidth),
           coverHeight: _favCoverHeight,
           onPostTap: (p) => _openHistoryPost(p),
+          onContextMenu: (p, pos) => _historyContextMenu(p, pos),
         ),
       );
       widgets.add(const SizedBox(height: 12));
@@ -2661,6 +2680,66 @@ class _ProfileViewState extends State<_ProfileView> {
     }
   }
 
+  /// 收藏卡片右键菜单（取消收藏）
+  Future<void> _favContextMenu(Map<String, dynamic> p, Offset globalPos) async {
+    final id = (p['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return;
+    final b = Theme.of(context).brightness;
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+          globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy),
+      color: bgColor(b),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(kRadiusMd),
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'unfav',
+          height: 36,
+          child: Row(
+            children: [
+              Icon(Icons.star_border_rounded,
+                  size: 16, color: textMutedColor(b)),
+              const SizedBox(width: 8),
+              Text('取消收藏', style: TextStyle(fontSize: 13, color: textColor(b))),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (action != 'unfav' || !mounted) return;
+    _unfavoritePost(id);
+  }
+
+  /// 取消收藏（走已有 togglePostFavorite 接口）
+  Future<void> _unfavoritePost(int postId) async {
+    try {
+      final resp = await ApiClient.instance
+          .togglePostFavorite(postId: postId)
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (resp.statusCode == 200 && json['code'] == 0) {
+        final faved = (json['data'] ?? {})['is_favorited'] as bool? ?? false;
+        if (!faved && mounted) {
+          setState(() {
+            _favorites.removeWhere(
+                (p) => (p['id'] as num?)?.toInt() == postId);
+          });
+          NotifyStack.success('已取消收藏', title: '提示');
+        }
+      } else {
+        if (mounted) {
+          NotifyStack.warning(json['msg']?.toString() ?? '操作失败', title: '提示');
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        NotifyStack.warning('操作失败，请稍后重试', title: '提示');
+      }
+    }
+  }
+
   /// 点击收藏卡片 → 打开帖子详情
   Future<void> _openFavPost(Map<String, dynamic> p) async {
     final id = (p['id'] as num?)?.toInt() ?? 0;
@@ -2681,6 +2760,65 @@ class _ProfileViewState extends State<_ProfileView> {
     );
     // 从详情页返回后刷新收藏列表（可能取消了收藏）
     _loadFavorites();
+  }
+
+  /// 历史卡片右键菜单（删除该记录）
+  Future<void> _historyContextMenu(
+      Map<String, dynamic> p, Offset globalPos) async {
+    final id = (p['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return;
+    final b = Theme.of(context).brightness;
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+          globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy),
+      color: bgColor(b),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(kRadiusMd),
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'del',
+          height: 36,
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 16, color: kDanger),
+              const SizedBox(width: 8),
+              Text('删除该记录', style: TextStyle(fontSize: 13, color: kDanger)),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (action != 'del' || !mounted) return;
+    _deleteHistoryRecord(id);
+  }
+
+  /// 删除单条浏览历史（服务端 + 本地）
+  Future<void> _deleteHistoryRecord(int postId) async {
+    try {
+      final resp = await ApiClient.instance
+          .deleteBrowseHistory(postId)
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (resp.statusCode == 200 && json['code'] == 0) {
+        if (mounted) {
+          setState(() {
+            _browseHistory.removeWhere(
+                (p) => (p['id'] as num?)?.toInt() == postId);
+          });
+          NotifyStack.success('已删除该记录', title: '提示');
+        }
+      } else {
+        if (mounted) {
+          NotifyStack.warning(json['msg']?.toString() ?? '操作失败', title: '提示');
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        NotifyStack.warning('操作失败，请稍后重试', title: '提示');
+      }
+    }
   }
 
   /// 点击历史卡片 → 打开帖子详情（返回后刷新浏览时间排序）

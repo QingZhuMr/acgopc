@@ -400,6 +400,19 @@ class ApiClient {
     );
   }
 
+  /// 删除单条浏览历史（业务接口）：POST delete_post_id
+  Future<http.Response> deleteBrowseHistory(int postId) {
+    final path = '/user/browseHistory';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'delete_post_id': '$postId'},
+    );
+  }
+
   /// 评论点赞 / 取消点赞（切换，业务接口）
   ///
   /// 返回：is_liked、like_count
