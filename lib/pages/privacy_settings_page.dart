@@ -162,7 +162,6 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
                         ),
                         _buildPrivacySwitch(
                           b,
-                          icon: Icons.dynamic_feed_outlined,
                           label: '动态',
                           subtitle: '他人访问你的主页时，是否可见你的「动态」列表',
                           value: _privacyPosts ?? true,
@@ -173,7 +172,6 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
                         ),
                         _buildPrivacySwitch(
                           b,
-                          icon: Icons.star_border_rounded,
                           label: '收藏',
                           subtitle: '他人访问你的主页时，是否可见你的「收藏」列表',
                           value: _privacyFavorites ?? true,
@@ -207,10 +205,9 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
     );
   }
 
-  /// 隐私开关行（自绘：图标 + 标题 + 副标题 + 右侧 Switch）
+  /// 隐私开关行（自绘：标题 + 副标题 + 右侧 Switch）
   Widget _buildPrivacySwitch(
     Brightness b, {
-    required IconData icon,
     required String label,
     required String subtitle,
     required bool value,
@@ -224,16 +221,6 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
         child: Row(
           children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: bgColor(b),
-                borderRadius: BorderRadius.circular(kRadiusSm),
-              ),
-              child: Icon(icon, size: 18, color: kPrimary),
-            ),
-            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

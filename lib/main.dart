@@ -39,6 +39,7 @@ import 'widgets/pick_images.dart';
 import 'pages/post_detail_page.dart';
 import 'pages/privacy_settings_page.dart';
 import 'pages/publish_post_page.dart';
+import 'pages/user_profile_page.dart';
 import 'services/secure_storage.dart';
 import 'pages/splash_page.dart';
 import 'services/theme_controller.dart';
@@ -568,6 +569,7 @@ class _HomePageState extends State<HomePage> {
               currentUserId: currentUid,
               embedded: true,
               onBack: () => setState(() => _macOverlay = null),
+              onOpenUserProfile: openUserProfile,
             );
           });
         },
@@ -585,6 +587,7 @@ class _HomePageState extends State<HomePage> {
         currentUserId: currentUid,
         embedded: true,
         onBack: () => setState(() => _macOverlay = null),
+        onOpenUserProfile: openUserProfile,
       );
     });
   }
@@ -594,6 +597,20 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     setState(() {
       _macOverlay = PrivacySettingsPage(
+        embedded: true,
+        onBack: () => setState(() => _macOverlay = null),
+      );
+    });
+  }
+
+  /// 在内容区打开他人个人中心（保留左侧导航栏，不遮挡）
+  void openUserProfile(int uid, String nickname, String avatar) {
+    if (!mounted || uid <= 0) return;
+    setState(() {
+      _macOverlay = UserProfilePage(
+        targetUid: uid,
+        nickname: nickname,
+        avatar: avatar,
         embedded: true,
         onBack: () => setState(() => _macOverlay = null),
       );
@@ -611,6 +628,7 @@ class _HomePageState extends State<HomePage> {
         embedded: true,
         focusCommentId: (commentId != null && commentId > 0) ? commentId : null,
         onBack: () => setState(() => _macOverlay = null),
+        onOpenUserProfile: openUserProfile,
       );
     });
   }

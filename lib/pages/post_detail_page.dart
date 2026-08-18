@@ -15,6 +15,7 @@ import '../widgets/pick_images.dart';
 import '../widgets/sticker_panel.dart';
 import '../utils/net_image.dart';
 import '../utils/time_format.dart';
+import 'user_profile_page.dart';
 
 /// 帖子详情页（广场动态内容页，参考小红书 PC 端）
 ///
@@ -43,6 +44,10 @@ class PostDetailPage extends StatefulWidget {
   /// 是否定位到"最新发布"的评论（true 时发布后由页面内部记录新评论 id 并定位）
   final bool focusNewComment;
 
+  /// 点击头像/昵称/@昵称 → 打开对方个人中心（由宿主 _HomePageState 传入，
+  /// 以内容区覆盖方式打开、保留左侧导航栏；null 时降级为 Navigator 全屏）
+  final void Function(int uid, String nickname, String avatar)? onOpenUserProfile;
+
   const PostDetailPage({
     super.key,
     required this.postBrief,
@@ -52,6 +57,7 @@ class PostDetailPage extends StatefulWidget {
     this.onBack,
     this.focusCommentId,
     this.focusNewComment = false,
+    this.onOpenUserProfile,
   });
 
   @override
@@ -1009,6 +1015,24 @@ class _PostDetailPageState extends State<PostDetailPage> {
             showAvatar: showAvatar,
             childShowCount: _childShowCount[c['id']] ?? _childDefaultShow,
             currentUserId: widget.currentUserId,
+            onUserTap: () => _openUserProfile(
+              (c['user_id'] as num?)?.toInt() ?? 0,
+              c['nickname']?.toString() ?? '',
+              c['avatar']?.toString() ?? '',
+            ),
+            onUserTapChild: (child) {
+              final childUid = (child['user_id'] as num?)?.toInt() ?? 0;
+              // 点击楼中楼回复者头像/昵称：打开回复者主页
+              _openUserProfile(
+                childUid,
+                child['nickname']?.toString() ?? '',
+                child['avatar']?.toString() ?? '',
+              );
+            },
+            onUserTapAt: (replyToUid, replyToName) {
+              // 点击 @昵称：打开被@者主页（无头像数据，用首字兜底）
+              _openUserProfile(replyToUid, replyToName, '');
+            },
             onReply: () => _startReply(
               (c['id'] as num?)?.toInt() ?? 0,
               (c['user_id'] as num?)?.toInt() ?? 0,
@@ -1179,6 +1203,32 @@ class _PostDetailPageState extends State<PostDetailPage> {
         onReport: !isMine
             ? () => _reportContent(postId: widget.postId)
             : null,
+        // 点击作者头像/昵称 → 打开作者主页
+        onUserTap: () => _openUserProfile(
+          (post['user_id'] as num?)?.toInt() ?? 0,
+          nickname,
+          avatar,
+        ),
+      ),
+    );
+  }
+
+  /// 打开他人/自己主页（优先内容区覆盖，保留左侧导航栏；无宿主回调时全屏打开）
+  void _openUserProfile(int uid, String nickname, String avatar) {
+    if (uid <= 0) return;
+    final cb = widget.onOpenUserProfile;
+    if (cb != null) {
+      cb(uid, nickname, avatar);
+      return;
+    }
+    // 降级：全屏打开（不保留左侧导航栏，仅当页面未嵌入宿主时）
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => UserProfilePage(
+          targetUid: uid,
+          nickname: nickname,
+          avatar: avatar,
+        ),
       ),
     );
   }
@@ -1470,6 +1520,15 @@ class _CommentItem extends StatelessWidget {
   final ValueChanged<int> onReportComment;
   final VoidCallback onExpandMore;
 
+  /// 点击顶层评论人头像/昵称 → 打开对方主页
+  final VoidCallback? onUserTap;
+
+  /// 点击楼中楼回复者头像/昵称 → 打开对方主页（参数为楼中楼评论数据）
+  final ValueChanged<Map<String, dynamic>>? onUserTapChild;
+
+  /// 点击楼中楼里 @昵称 → 打开被@者主页（参数为 被@者uid + 被@者昵称）
+  final void Function(int replyToUid, String replyToName)? onUserTapAt;
+
   /// 是否显示本条顶层评论头像（连续同作者合并）
   final bool showAvatar;
 
@@ -1484,6 +1543,9 @@ class _CommentItem extends StatelessWidget {
     required this.onDeleteComment,
     required this.onReportComment,
     required this.onExpandMore,
+    this.onUserTap,
+    this.onUserTapChild,
+    this.onUserTapAt,
     this.showAvatar = true,
   });
 
@@ -1554,6 +1616,7 @@ class _CommentItem extends StatelessWidget {
                 ? () => onReportComment((comment['id'] as num?)?.toInt() ?? 0)
                 : null,
             showAvatar: showAvatar,
+            onUserTap: onUserTap,
           ),
           // 楼中楼（与主背景同步，不额外加次色调背景）
           // 左侧用 padding 缩进（保持嵌套视觉），右侧 padding 0 使省略号/爱心与顶层评论右对齐
@@ -1664,13 +1727,24 @@ class _CommentItem extends StatelessWidget {
               height: 1.6,
             ),
             children: [
+              // @昵称可点击：跳被@者主页（仅非本人且存在时）
               if (showAt)
-                TextSpan(
-                  text: '@$replyToName ',
-                  style: TextStyle(
-                    color: childMine
-                        ? Colors.white.withValues(alpha: 0.85)
-                        : (b == Brightness.light ? Colors.black : Colors.white),
+                WidgetSpan(
+                  alignment: PlaceholderAlignment.baseline,
+                  baseline: TextBaseline.alphabetic,
+                  child: InkWell(
+                    onTap: onUserTapAt != null
+                        ? () => onUserTapAt!(replyToUid, replyToName)
+                        : null,
+                    mouseCursor: SystemMouseCursors.click,
+                    child: Text(
+                      '@$replyToName ',
+                      style: TextStyle(
+                        color: childMine
+                            ? Colors.white.withValues(alpha: 0.85)
+                            : (b == Brightness.light ? Colors.black : Colors.white),
+                      ),
+                    ),
                   ),
                 ),
               ..._richSpans(b, content),
@@ -1695,6 +1769,8 @@ class _CommentItem extends StatelessWidget {
             ? () => onReportComment((child['id'] as num?)?.toInt() ?? 0)
             : null,
         showAvatar: showAvatar,
+        // 楼中楼回复者头像/昵称 → 打开对方主页
+        onUserTap: onUserTapChild != null ? () => onUserTapChild!(child) : null,
       ),
     );
   }
@@ -2028,6 +2104,9 @@ class _ChatBubble extends StatelessWidget {
   final VoidCallback onReply;
   final VoidCallback? onDelete; // 自己
   final VoidCallback? onReport; // 他人
+
+  /// 点击头像/昵称 → 打开对方个人中心
+  final VoidCallback? onUserTap;
   final double avatarSize;
   final bool showNickname;
 
@@ -2057,6 +2136,7 @@ class _ChatBubble extends StatelessWidget {
     this.onLike,
     this.onDelete,
     this.onReport,
+    this.onUserTap,
     this.avatarSize = 32,
     this.showNickname = true,
     this.level = 0,
@@ -2070,12 +2150,20 @@ class _ChatBubble extends StatelessWidget {
     // 昵称在气泡内时，头像下移使其垂直中心与昵称对齐；昵称在气泡上方时头像下移 4px
     final avatarTop =
         nicknameAbove ? 2.5 : (16 - avatarSize / 2).clamp(0.0, double.infinity);
+    // 头像：可点击跳对方个人中心（hover 小手）
     final avatar = Padding(
       padding: EdgeInsets.only(top: avatarTop),
-      child: _AvatarBox(
-        url: avatarUrl,
-        nickname: nickname,
-        size: avatarSize,
+      child: InkWell(
+        onTap: onUserTap,
+        mouseCursor: onUserTap != null
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        customBorder: const CircleBorder(),
+        child: _AvatarBox(
+          url: avatarUrl,
+          nickname: nickname,
+          size: avatarSize,
+        ),
       ),
     );
     // 气泡：点击回复（带按压缩放动画）；右键弹删除/举报菜单（本人=删除，他人=举报）
@@ -2100,6 +2188,7 @@ class _ChatBubble extends StatelessWidget {
         onLike: onLike,
         onDelete: onDelete,
         onReport: onReport,
+        onUserTap: onUserTap,
         // 昵称在气泡上方时，气泡内不显示昵称；头像合并（showAvatar=false）时也隐藏
         showNickname: showNickname && showAvatar && !nicknameAbove,
         avatarSize: avatarSize,
@@ -2138,11 +2227,22 @@ class _ChatBubble extends StatelessWidget {
     // 昵称在气泡上方：头像与昵称同一行（顶部对齐），气泡在昵称下方
     if (nicknameAbove) {
       final b = Theme.of(context).brightness;
-      final nameLine = Text(
-        nickname,
-        overflow: TextOverflow.ellipsis,
-        style: nicknameStyle ??
-            TextStyle(fontSize: 14, color: textMutedColor(b)),
+      // 昵称可点击跳对方个人中心（hover 小手）
+      final nameLine = InkWell(
+        onTap: onUserTap,
+        mouseCursor: onUserTap != null
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        borderRadius: BorderRadius.circular(4),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Text(
+            nickname,
+            overflow: TextOverflow.ellipsis,
+            style: nicknameStyle ??
+                TextStyle(fontSize: 14, color: textMutedColor(b)),
+          ),
+        ),
       );
       return Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2297,6 +2397,9 @@ class _ChatBubbleBody extends StatelessWidget {
   final VoidCallback? onLike;
   final VoidCallback? onDelete;
   final VoidCallback? onReport;
+
+  /// 点击昵称 → 打开对方个人中心
+  final VoidCallback? onUserTap;
   final bool showNickname;
   final double avatarSize;
   final int level;
@@ -2313,6 +2416,7 @@ class _ChatBubbleBody extends StatelessWidget {
     required this.onLike,
     required this.onDelete,
     required this.onReport,
+    required this.onUserTap,
     required this.showNickname,
     this.avatarSize = 32,
     this.level = 0,
@@ -2355,18 +2459,28 @@ class _ChatBubbleBody extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 昵称行（无省略号；删除/举报走右键气泡）
+            // 昵称行（无省略号；删除/举报走右键气泡；昵称可点击跳对方个人中心）
             if (showNickname)
-              Text(
-                nickname,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: nicknameColor,
+              InkWell(
+                onTap: onUserTap,
+                mouseCursor: onUserTap != null
+                    ? SystemMouseCursors.click
+                    : SystemMouseCursors.basic,
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    nickname,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: nicknameColor,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                overflow: TextOverflow.ellipsis,
               ),
-            if (showNickname) const SizedBox(height: 4),
+            if (showNickname) const SizedBox(height: 2),
             contentWidget,
             if (imagesWidget != null) ...[
               const SizedBox(height: 6),

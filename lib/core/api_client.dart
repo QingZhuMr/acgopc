@@ -307,19 +307,24 @@ class ApiClient {
     );
   }
 
-  /// 我的收藏列表（业务接口）：分页返回当前用户收藏的帖子
+  /// 我的收藏列表（业务接口）：分页返回指定用户收藏的帖子
   ///
+  /// targetUid 为空或等于当前用户：返回自己收藏（个人中心「收藏」tab）；
+  /// targetUid 为他人：访问他人主页，按对方 privacy_favorites 校验
+  /// （设为仅自己时返回空 list + visible=0）。
   /// 字段同广场列表：id, user_id, nickname, avatar, content, images[],
   /// comment_count, like_count, is_liked, is_favorited(恒 true), favorite_count,
   /// create_time, create_time_text, location
   Future<http.Response> getMyFavorites({
     int page = 1,
     int pageSize = 12,
+    int? targetUid,
   }) {
     final path = '/post/favorites';
     final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
       'page': '$page',
       'page_size': '$pageSize',
+      if (targetUid != null) 'target_uid': '$targetUid',
     });
     return http.get(
       uri,
@@ -329,19 +334,24 @@ class ApiClient {
     );
   }
 
-  /// 我的动态列表（业务接口）：分页返回当前用户发布的帖子（个人中心「动态」tab）
+  /// 我的动态列表（业务接口）：分页返回指定用户发布的帖子
   ///
+  /// targetUid 为空或等于当前用户：返回自己动态（个人中心「动态」tab）；
+  /// targetUid 为他人：访问他人主页，按对方 privacy_posts 校验
+  /// （设为仅自己时返回空 list + visible=0）。
   /// 字段同广场列表：id, user_id, nickname, avatar, content, images[],
   /// comment_count, like_count, is_liked, is_favorited(恒 false——自己的帖子不能收藏),
   /// favorite_count, create_time, create_time_text, location
   Future<http.Response> getMyPosts({
     int page = 1,
     int pageSize = 12,
+    int? targetUid,
   }) {
     final path = '/post/myPosts';
     final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
       'page': '$page',
       'page_size': '$pageSize',
+      if (targetUid != null) 'target_uid': '$targetUid',
     });
     return http.get(
       uri,

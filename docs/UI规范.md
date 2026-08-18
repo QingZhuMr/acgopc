@@ -333,6 +333,17 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - **隐私设置页**（`pages/privacy_settings_page.dart`，由省略号菜单「隐私设置」进入）：以 **内容区覆盖模式**打开（通过 `_HomePageState._macOverlay`，`embedded: true`），**保留左侧导航栏、不遮挡整个窗口**。内嵌标题栏与发布页/详情页一致（高 48、标题 15px/w600、macOS 风格返回按钮），顶部距离由宿主 `_TitleBar` 承担；内容区可滚动用 `SilkyListView`。**全屏模式**（`embedded: false`）遵守双端顶距规范（Win 顶距 5px / macOS 20px、标题 20px/w600、左右 24px）。
   - **主页可见性**：一张卡片（`bgHoverColor` + `kRadiusMd` 圆角）内含两项开关（动态/收藏），每项为自绘行：左侧图标（36x36 `bgColor` 圆角 `kRadiusSm` 容器 + `kPrimary` 图标）、标题（14px/w600）+ 副标题（12px `textMutedColor`）、右侧 Material `Switch`（`activeThumbColor: kPrimary`，保存中禁用）。**开关即改即存**（调 `user/privacy`），失败回滚并提示。对应后端 `privacy_posts`/`privacy_favorites`（1公开 0仅自己），为访问他人主页功能提供可见性依据。
 
+## 10.2 他人个人中心页
+
+- **入口**（`pages/user_profile_page.dart`，内容区覆盖打开，`embedded: true`，保留左侧导航栏）：帖子详情页**点击他人头像/昵称**、评论里**@昵称（含楼中楼）**进入。由 `_HomePageState.openUserProfile(uid, nickname, avatar)` 实现。
+- **内容**：用户信息卡（头像 56px 圆形 + 昵称 18px/w600）+ **动态/收藏双 tab**（胶囊切换，`primarySoft` 底选中 + `kPrimary` 字）。
+  - 数据源：`GET /api/post/myPosts`、`/api/post/favorites` 带 `target_uid`。
+  - **隐私占位**：对方将动态/收藏设为仅自己（`visible=0`）时，展示锁图标 +「对方将「动态/收藏」设为仅自己可见」。
+  - 空态：动态「还没有发布任何动态」、收藏「还没有收藏任何帖子」。
+  - 帖子卡片：内容摘要（最多 3 行）+ 图片横排（最多 3 张 72x72）+ 点赞/评论数 + 时间；点击卡片进帖子详情（全屏打开）。
+- **聊天区点击约定**：主贴气泡昵称（气泡上方）、顶层评论昵称（气泡内）、楼中楼昵称（气泡上方）、头像、`@昵称` 均可点击进入对应主页（本人昵称/头像点击也打开自身主页）。
+  - `@昵称` 点击跳**被@者**主页（`reply_to_uid`）；楼中楼回复者头像/昵称跳**回复者**主页。
+
 ## 10.1 气泡菜单（省略号弹层）规范
 
 - 所有「省略号」弹层（帖子详情删除/举报、个人中心更多操作等）统一用 `widgets/bubble_menu.dart` 的 `BubbleMenu`，**不再用 `PopupMenuButton`**
