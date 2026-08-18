@@ -356,7 +356,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - **动画**：显示淡入 + 轻微缩放（`easeOutBack`），消失淡出，约 150ms
 - **关闭**：点击气泡外、鼠标滚动、再次点击触发图标即关闭
 - **菜单项**：`BubbleMenuItem`（文本 + 可选图标 + 颜色；删除项红色 `kDanger`，举报项默认文字色）
-- **动态 / 收藏 tab**：位于用户信息卡下方，胶囊切换（`_ProfileTab`）：**动态在左、收藏在右**。选中项 `primarySoft` 浅蓝底 + `kPrimary` 蓝字（w600）+ 计数；未选中 `textSecondary` 字（w400）；圆角 `kRadiusBtn`，切换动画 150ms。`_switchTab` 切换，**首次进入各 tab 按需加载**（未加载过才拉取）。
+- **动态 / 收藏 / 历史 tab**：位于用户信息卡下方，胶囊切换（`_ProfileTab`）：**动态在左、历史在右**（动态/收藏/历史从左到右）。选中项 `primarySoft` 浅蓝底 + `kPrimary` 蓝字（w600）+ 计数；未选中 `textSecondary` 字（w400）；圆角 `kRadiusBtn`，切换动画 150ms。`_switchTab` 切换，**首次进入各 tab 按需加载**（未加载过才拉取）。
 - **我的动态**：只显示当前用户发布的帖子（个人中心「动态」tab），小红书/抖音风格双列瀑布流：
   - 数据源：`GET /api/post/myPosts`（分页，page_size=12，按发布时间倒序），触底自动加载更多
   - 布局/状态/交互：复用首页瀑布流组件 `_MasonryGrid`/`_PostCard`，列数按窗口宽度 2/3/4 列；加载中骨架屏（`_SkeletonGrid`）、失败重试（`_FavRetry`）、空态（`_EmptyFavorites`，图标 +「还没有发布任何动态」文案）
@@ -369,4 +369,11 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
   - 状态：加载中骨架屏（`_SkeletonGrid`）、失败重试（`_FavRetry`）、空态（`_EmptyFavorites`，图标 + 引导文案）
   - 交互：点击卡片进帖子详情；从详情返回后自动刷新收藏列表（可能已取消收藏）
   - **刷新时机**：按需拉取（非定时轮询/非 WS 推送）——首次进入个人中心加载；之后**每次从其他 tab 切回个人中心**（`active` 由 false→true）自动刷新，保证「广场里收藏/取消收藏」后切回来是最新数据。收藏列表是当前用户私有数据、低频变更、单设备在线，无需轮询/推送开销
+- **浏览历史**（「历史」tab，个人中心最右侧）：**服务端跨设备同步**（`user.browse_history` JSON 字段，**最多 120 条**，按浏览时间倒序）：
+  - 数据源：`GET /api/user/browseHistory`（全量一次拉取，无分页）；记录：打开帖子详情时 `POST post_id`（静默上报，去重置顶限 120）
+  - 布局：复用瀑布流 `_MasonryGrid`/`_PostCard`，同动态/收藏列数与封面高度算法
+  - 状态：加载中骨架屏（`_SkeletonGrid`）、失败重试（`_FavRetry`）、空态（`_EmptyFavorites`，图标 `history_rounded` +「还没有浏览历史」）
+  - **清空按钮**：历史列表非空时右上角「清空历史」文字按钮（`kDanger`），点击弹确认框 → `POST clear=1` 服务端清空 → 本地列表清空
+  - 交互：点击卡片进帖子详情（内容区覆盖）；从详情返回后自动刷新浏览历史（新的浏览置顶）
+  - **刷新时机**：切到「历史」tab 首次加载；从其他 tab 切回个人中心时若历史 tab 未加载过则加载；清空/详情返回后即时刷新
 - **导航**：个人中心（`_currentIndex=1`）仍在左侧导航栏，页面标题「个人中心」
