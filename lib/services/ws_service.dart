@@ -96,6 +96,11 @@ class WsService {
   final _typingCtrl = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get onTyping => _typingCtrl.stream;
 
+  /// 好友在线状态流（收到 presence 推送，user_id + online）
+  final _presenceCtrl =
+      StreamController<({int userId, bool online})>.broadcast();
+  Stream<({int userId, bool online})> get onPresence => _presenceCtrl.stream;
+
   /// 连接状态回调（可选，用于 UI 展示）
   void Function(bool connected)? onConnectionChange;
 
@@ -331,6 +336,15 @@ class WsService {
         final typing = msg['typing'];
         if (typing is Map<String, dynamic>) {
           _typingCtrl.add(typing);
+        }
+        break;
+
+      case 'presence':
+        // 好友在线状态变化（user_id / online 0/1）
+        final userId = (msg['user_id'] as num?)?.toInt() ?? 0;
+        final online = (msg['online'] as num?)?.toInt() == 1;
+        if (userId > 0) {
+          _presenceCtrl.add((userId: userId, online: online));
         }
         break;
 

@@ -106,6 +106,7 @@ class MessagePageState extends State<MessagePage> {
   StreamSubscription<Map<String, dynamic>>? _chatRecallSub;
   StreamSubscription<Map<String, dynamic>>? _chatClearSub;
   StreamSubscription<Map<String, dynamic>>? _typingSub;
+  StreamSubscription<({int userId, bool online})>? _presenceSub;
 
   /// 对方正在输入状态
   bool _peerTyping = false;
@@ -198,6 +199,28 @@ class MessagePageState extends State<MessagePage> {
         if (mounted) setState(() => _peerTyping = false);
       });
     });
+    // 全局监听好友在线状态：刷新当前会话在线圆点 + 好友列表在线状态
+    _presenceSub = WsService.instance.onPresence.listen((presence) {
+      if (!mounted) return;
+      // 1) 当前会话好友的在线状态
+      final friend = _selectedFriend;
+      final peerId = (friend?['user_id'] as num?)?.toInt() ?? 0;
+      if (presence.userId == peerId && _peerOnline != presence.online) {
+        setState(() => _peerOnline = presence.online);
+      }
+      // 2) 同步更新好友列表中的 online 字段（会话列表/好友列表的在线圆点）
+      var changed = false;
+      for (var i = 0; i < _friends.length; i++) {
+        final f = _friends[i];
+        final fUid = (f['user_id'] as num?)?.toInt() ?? 0;
+        final fOnline = (f['online'] ?? false) == true;
+        if (fUid == presence.userId && fOnline != presence.online) {
+          _friends[i] = {...f, 'online': presence.online};
+          changed = true;
+        }
+      }
+      if (changed) setState(() {});
+    });
     // 全局监听会话清空：多端同步清除本地记录
     _chatClearSub = WsService.instance.onChatClear.listen((clear) async {
       final chatId = clear['chat_id']?.toString() ?? '';
@@ -278,6 +301,7 @@ class MessagePageState extends State<MessagePage> {
     _chatRecallSub?.cancel();
     _chatClearSub?.cancel();
     _typingSub?.cancel();
+    _presenceSub?.cancel();
     // 清理通知器状态（页面销毁时不再作为"当前会话/活跃"）
     ChatNotifier.instance.clearCurrentChat();
     ChatNotifier.instance.setPageActive(false);
@@ -315,6 +339,12 @@ class MessagePageState extends State<MessagePage> {
     _conversationRefreshDebounce = Timer(const Duration(milliseconds: 200), () {
       if (!mounted) return;
       _loadConversations();
+      // 当前有选中会话时同步刷新对话框消息。
+      // 修复"会话列表更新快、对话框更新慢"：WS 消息先异步入库，
+      // chatUnreadTick 在入库完成后触发（比 _chatSub 立即读更准确）。
+      if (_selectedFriend != null) {
+        _loadLocalMessages();
+      }
     });
   }
 
@@ -2349,13 +2379,18 @@ class MessagePageState extends State<MessagePage> {
                       color: textColor(b),
                     ),
                   ),
-                  // 对方正在输入…
-                  if (_peerTyping)
-                    Text(
-                      '正在输入…',
+                  // 在线状态/正在输入（固定高度占位，切换时不推挤昵称位置）
+                  SizedBox(
+                    height: 15,
+                    child: Text(
+                      _peerTyping ? '正在输入…' : (_peerOnline ? '在线' : '离线'),
                       style: TextStyle(
-                          fontSize: 11, color: kPrimary),
+                        fontSize: 11,
+                        // 正在输入用 textMutedColor（同"我的"页 关注/粉丝 文字），不用蓝色
+                        color: textMutedColor(b),
+                      ),
                     ),
+                  ),
                 ],
               ),
               const Spacer(),
