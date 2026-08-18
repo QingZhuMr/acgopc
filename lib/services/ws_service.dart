@@ -69,6 +69,13 @@ class WsService {
   /// 帖子回复通知回调（收到 reply_notice 推送，含 notification 对象）
   void Function(Map<String, dynamic> notification)? onReplyNotice;
 
+  /// 被关注通知回调（收到 follow_notice 推送，含 notification 对象）
+  void Function(Map<String, dynamic> notification)? onFollowNotice;
+
+  /// 聊天消息流（收到 chat_message 推送，密文透传，客户端解密）
+  final _chatMsgCtrl = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onChatMessage => _chatMsgCtrl.stream;
+
   /// 连接状态回调（可选，用于 UI 展示）
   void Function(bool connected)? onConnectionChange;
 
@@ -81,11 +88,13 @@ class WsService {
     void Function(Map<String, dynamic> update)? onUpdate,
     void Function(Map<String, dynamic> maintenance)? onMaintenance,
     void Function(Map<String, dynamic> notification)? onReplyNotice,
+    void Function(Map<String, dynamic> notification)? onFollowNotice,
   }) {
     this.onForceLogout = onForceLogout;
     this.onUpdate = onUpdate;
     this.onMaintenance = onMaintenance;
     this.onReplyNotice = onReplyNotice;
+    this.onFollowNotice = onFollowNotice;
     if (_running) return;
     _running = true;
     _stopped = false;
@@ -228,6 +237,20 @@ class WsService {
         final notification = msg['notification'];
         if (notification is Map<String, dynamic>) {
           onReplyNotice?.call(notification);
+        }
+        break;
+
+      case 'follow_notice':
+        final notification = msg['notification'];
+        if (notification is Map<String, dynamic>) {
+          onFollowNotice?.call(notification);
+        }
+        break;
+
+      case 'chat_message':
+        final message = msg['message'];
+        if (message is Map<String, dynamic>) {
+          _chatMsgCtrl.add(message);
         }
         break;
 

@@ -509,6 +509,80 @@ class ApiClient {
     );
   }
 
+  // ============ 聊天（第二期，E2EE 密文） ============
+
+  /// 上传本人聊天公钥（业务接口）
+  Future<http.Response> postChatKey(String publicKey) {
+    final path = '/chat/key';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'public_key': publicKey},
+    );
+  }
+
+  /// 批量获取用户聊天公钥（业务接口）
+  Future<http.Response> getChatKeys(List<int> userIds) {
+    final path = '/chat/keys';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'user_ids': userIds.join(',')},
+    );
+  }
+
+  /// 发送聊天消息（密文，业务接口）
+  Future<http.Response> sendChatMessage({
+    required int receiverId,
+    required String body,
+    required String nonce,
+    required String ephemeralPub,
+    required String clientMsgId,
+  }) {
+    final path = '/chat/send';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {
+        'receiver_id': '$receiverId',
+        'msg_type': '1',
+        'body': body,
+        'nonce': nonce,
+        'ephemeral_pub': ephemeralPub,
+        'client_msg_id': clientMsgId,
+      },
+    );
+  }
+
+  /// 拉取会话历史（密文，业务接口）
+  Future<http.Response> getChatHistory({
+    required int peerId,
+    int? beforeId,
+    int pageSize = 50,
+  }) {
+    final path = '/chat/history';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      'peer_id': '$peerId',
+      'page_size': '$pageSize',
+      if (beforeId != null) 'before_id': '$beforeId',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
   /// 评论点赞 / 取消点赞（切换，业务接口）
   ///
   /// 返回：is_liked、like_count

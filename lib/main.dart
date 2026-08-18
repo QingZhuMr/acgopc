@@ -252,10 +252,12 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
       onUpdate: _handleWsUpdate,
       onMaintenance: _handleWsMaintenance,
       onReplyNotice: NotificationCenter.instance.handleWsReply,
+      onFollowNotice: NotificationCenter.instance.handleWsFollow,
     );
     // 启动通知中心：初始化系统通知 + 拉取未读数 + 定时轮询兜底
     NotificationCenter.instance.start(
       onOpenPost: _openPostFromNotice,
+      onOpenUserProfile: _openUserProfileFromNotice,
     );
     // 登录成功后异步检查更新（不阻塞 UI）
     Updater.instance.showUpdateIfAvailable();
@@ -293,6 +295,15 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
         ),
       ),
     );
+  }
+
+  /// 从通知/应用内通知跳转到他人主页（type=3 被关注通知）
+  void _openUserProfileFromNotice(int uid, String nickname, String avatar) {
+    if (uid <= 0) return;
+    if (_HomePageState.current?.mounted == true) {
+      _HomePageState.current!.openUserProfile(uid, nickname, avatar);
+      return;
+    }
   }
 
   /// WebSocket 实时推送的强制退出处理（带原因提示）
@@ -542,6 +553,7 @@ class _HomePageState extends State<HomePage> {
             embedded: true,
             onChanged: () => NotificationCenter.instance.fetchUnreadForce(),
             onOpenPost: _showPostFromNoticeOverlay,
+            onOpenUserProfile: openUserProfile,
           ),
         ),
         _NavItem(

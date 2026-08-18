@@ -35,13 +35,18 @@ class NotificationCenter extends ChangeNotifier {
   /// 跳转帖子详情的回调（由 main.dart 注入，避免通知中心依赖具体页面构造）
   void Function(int postId, String postContent)? onOpenPost;
 
+  /// 跳转他人主页的回调（type=3 被关注通知点击）
+  void Function(int uid, String nickname, String avatar)? onOpenUserProfile;
+
   /// 启动通知中心（登录成功后调用）
   ///
   /// 初始化系统通知插件 + 拉取一次未读数 + 启动定时轮询。
   void start({
     void Function(int postId, String postContent)? onOpenPost,
+    void Function(int uid, String nickname, String avatar)? onOpenUserProfile,
   }) {
     this.onOpenPost = onOpenPost;
+    this.onOpenUserProfile = onOpenUserProfile;
     _active = true;
     // 初始化 Windows 系统通知（失败不影响）
     SystemNotifier.instance.init();
@@ -131,6 +136,51 @@ class NotificationCenter extends ChangeNotifier {
     // 刷新角标
     _unread += 1;
     notifyListeners();
+  }
+
+  /// 收到 WS follow_notice 推送（被关注）
+  ///
+  /// 弹应用内通知 + 系统通知，并刷新角标。
+  void handleWsFollow(Map<String, dynamic> notification) {
+    final fromUid = (notification['from_uid'] as num?)?.toInt() ?? 0;
+    final fromName = (notification['from_nickname'] as String?) ?? '有人';
+    final fromAvatar = (notification['from_avatar'] as String?) ?? '';
+
+    // 标题：xx 关注了你
+    final title = '$fromName 关注了你';
+    final body = '快去看看 TA 的主页吧';
+
+    // 应用内通知（前台可见）
+    NotifyStack.notify(
+      title: title,
+      message: body,
+      onTap: fromUid > 0
+          ? () => _openUserProfile(fromUid, fromName, fromAvatar)
+          : null,
+      persistent: false,
+    );
+
+    // Windows 系统通知（Toast）
+    SystemNotifier.instance.show(
+      title: title,
+      subtitle: '耶熊',
+      body: body,
+      onClick: fromUid > 0
+          ? () => _openUserProfile(fromUid, fromName, fromAvatar)
+          : null,
+    );
+
+    // 刷新角标
+    _unread += 1;
+    notifyListeners();
+  }
+
+  /// 跳转他人主页（应用内/系统通知点击）
+  void _openUserProfile(int uid, String nickname, String avatar) {
+    final cb = onOpenUserProfile;
+    if (cb != null) {
+      cb(uid, nickname, avatar);
+    }
   }
 
   /// 跳转帖子详情（应用内通知点击）

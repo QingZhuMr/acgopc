@@ -1,16 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:silky_scroll/silky_scroll.dart';
 
 import '../core/api_client.dart';
 import '../core/app_config.dart';
 import '../core/app_theme.dart';
+import '../services/chat_service.dart';
+import '../services/chat_store.dart';
+import '../services/ws_service.dart';
 import '../utils/net_image.dart';
 import '../widgets/notify.dart';
 
 /// 消息页（左侧导航栏「消息」入口）
 ///
 /// 左侧：好友列表（互相关注的用户），分页加载；右侧：聊天界面。
-/// 聊天功能（第二期）开发中，当前右侧为占位界面。
+/// 聊天基于 E2EE（X25519 + AES-GCM），密文走服务器，本地 SQLite 存明文。
 ///
 /// 样式遵循 docs/UI规范.md：颜色一律用 app_theme.dart 函数/常量。
 class MessagePage extends StatefulWidget {
@@ -33,10 +38,28 @@ class _MessagePageState extends State<MessagePage> {
   /// 当前选中好友
   Map<String, dynamic>? _selectedFriend;
 
+  /// 聊天消息（本地 SQLite 明文，倒序存储 → 展示时反转）
+  List<Map<String, dynamic>> _messages = [];
+
+  /// 会话好友公钥（发消息用）
+  String? _peerPublicKey;
+
+  final TextEditingController _inputCtrl = TextEditingController();
+  bool _sending = false;
+
+  StreamSubscription<Map<String, dynamic>>? _chatSub;
+
   @override
   void initState() {
     super.initState();
     _loadFriends();
+  }
+
+  @override
+  void dispose() {
+    _chatSub?.cancel();
+    _inputCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadFriends() async {
@@ -102,6 +125,100 @@ class _MessagePageState extends State<MessagePage> {
     } catch (_) {
       if (mounted) setState(() => _loadingMore = false);
     }
+  }
+
+  /// 选中好友 → 初始化聊天
+  Future<void> _selectFriend(Map<String, dynamic> friend) async {
+    setState(() {
+      _selectedFriend = friend;
+      _messages = [];
+      _peerPublicKey = null;
+    });
+    _chatSub?.cancel();
+    // 监听 WS 新消息
+    _chatSub = WsService.instance.onChatMessage.listen((msg) {
+      if (!mounted) return;
+      final peerId = (msg['sender_id'] as num?)?.toInt() ?? 0;
+      final selectedUid = (_selectedFriend?['user_id'] as num?)?.toInt() ?? 0;
+      if (peerId == selectedUid) {
+        _loadLocalMessages();
+      }
+    });
+
+    try {
+      await ChatService.instance.init(widget.currentUserId);
+      // 拉对方公钥
+      final keys = await ApiClient.instance
+          .getChatKeys([(friend['user_id'] as num?)?.toInt() ?? 0]);
+      final json = ApiClient.safeJsonDecode(keys.body);
+      if (json['code'] == 0) {
+        final keyMap = (json['data'] ?? {})['keys'] as Map? ?? {};
+        _peerPublicKey = keyMap['${friend['user_id']}']?.toString();
+      }
+      // 拉历史
+      await ChatService.instance.pullHistory(
+        peerId: (friend['user_id'] as num?)?.toInt() ?? 0,
+      );
+      _loadLocalMessages();
+    } catch (_) {
+      _loadLocalMessages();
+    }
+  }
+
+  Future<void> _loadLocalMessages() async {
+    final friend = _selectedFriend;
+    if (friend == null) return;
+    final myUid = widget.currentUserId;
+    final peerId = (friend['user_id'] as num?)?.toInt() ?? 0;
+    final chatId = '${myUid < peerId ? myUid : peerId}_${myUid < peerId ? peerId : myUid}';
+    final rows = await ChatStore.instance.getMessages(chatId, limit: 200);
+    if (!mounted) return;
+    setState(() {
+      _messages = rows.reversed.toList();
+    });
+  }
+
+  /// 发送消息
+  Future<void> _sendMessage() async {
+    final text = _inputCtrl.text.trim();
+    if (text.isEmpty || _sending) return;
+    final friend = _selectedFriend;
+    if (friend == null) return;
+    final peerId = (friend['user_id'] as num?)?.toInt() ?? 0;
+    setState(() => _sending = true);
+
+    // 乐观更新：先展示本地消息
+    final myUid = widget.currentUserId;
+    final chatId = '${myUid < peerId ? myUid : peerId}_${myUid < peerId ? peerId : myUid}';
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    await ChatStore.instance.upsertMessage(
+      chatId: chatId,
+      msgId: 0,
+      clientMsgId: 'local_${now}_${_messages.length}',
+      senderId: myUid,
+      receiverId: peerId,
+      msgType: 1,
+      plaintext: text,
+      ciphertext: '',
+      nonce: '',
+      ephemeralPub: '',
+      sendStatus: 0,
+      createTime: now,
+    );
+    _inputCtrl.clear();
+    await _loadLocalMessages();
+
+    final result = await ChatService.instance.sendMessage(
+      receiverId: peerId,
+      plaintext: text,
+      peerPublicKey: _peerPublicKey,
+    );
+    if (!mounted) return;
+    if (!result.ok) {
+      NotifyStack.warning(result.error, title: '提示');
+    }
+    setState(() => _sending = false);
+    await _loadLocalMessages();
   }
 
   @override
@@ -218,11 +335,12 @@ class _MessagePageState extends State<MessagePage> {
   }
 
   Widget _buildFriendItem(Brightness b, Map<String, dynamic> friend) {
-    final selected = _selectedFriend?['user_id'] == (friend['user_id'] as num?)?.toInt();
+    final selected = _selectedFriend?['user_id'] ==
+        (friend['user_id'] as num?)?.toInt();
     final avatar = friend['avatar']?.toString() ?? '';
     final nickname = friend['nickname']?.toString() ?? '';
     return InkWell(
-      onTap: () => setState(() => _selectedFriend = friend),
+      onTap: () => _selectFriend(friend),
       hoverColor: bgHoverColor(b),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -260,25 +378,27 @@ class _MessagePageState extends State<MessagePage> {
 
   Widget _avatarPlaceholder(Brightness b, String nickname) {
     final text = nickname.trim();
-    final initial = text.isEmpty ? '?' : (text.length <= 2 ? text : text.substring(0, 2));
+    final initial =
+        text.isEmpty ? '?' : (text.length <= 2 ? text : text.substring(0, 2));
     return Container(
       width: 40,
       height: 40,
-      decoration: BoxDecoration(color: primarySoftColor(b), shape: BoxShape.circle),
+      decoration:
+          BoxDecoration(color: primarySoftColor(b), shape: BoxShape.circle),
       alignment: Alignment.center,
       child: Text(
         initial,
-        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: kPrimary),
+        style: TextStyle(
+            fontSize: 15, fontWeight: FontWeight.w600, color: kPrimary),
       ),
     );
   }
 
-  /// 右侧聊天区（第二期填充聊天功能，当前为占位）
+  /// 右侧聊天区
   Widget _buildChatArea(Brightness b) {
     final friend = _selectedFriend;
     if (friend == null) {
       return Center(
-        // 圆润聊天气泡占位：白天很浅、晚上很深（用 textFaintColor 随主题），无文字
         child: Icon(
           Icons.chat_bubble_rounded,
           size: 64,
@@ -317,20 +437,23 @@ class _MessagePageState extends State<MessagePage> {
                   color: textColor(b),
                 ),
               ),
+              const Spacer(),
+              if (_peerPublicKey == null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text(
+                    '对方暂未开启聊天',
+                    style: TextStyle(fontSize: 12, color: textMutedColor(b)),
+                  ),
+                ),
             ],
           ),
         ),
-        // 消息区（第二期填充）：圆润气泡占位（白天浅/晚上深，随主题）
+        // 消息区
         Expanded(
-          child: Center(
-            child: Icon(
-              Icons.chat_bubble_rounded,
-              size: 48,
-              color: textFaintColor(b),
-            ),
-          ),
+          child: _buildMessageList(b),
         ),
-        // 输入区（第二期填充，无分割线，主背景色）
+        // 输入区（无分割线，主背景色）
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           color: bgColor(b),
@@ -340,14 +463,15 @@ class _MessagePageState extends State<MessagePage> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: bgColor(b),
+                    color: bgHoverColor(b),
                     borderRadius: BorderRadius.circular(kRadiusMd),
                   ),
                   child: TextField(
-                    enabled: false,
+                    controller: _inputCtrl,
+                    onSubmitted: (_) => _sendMessage(),
                     style: TextStyle(fontSize: 14, color: textColor(b)),
                     decoration: InputDecoration(
-                      hintText: '聊天功能开发中…',
+                      hintText: '发送消息…',
                       hintStyle:
                           TextStyle(fontSize: 14, color: textFaintColor(b)),
                       border: InputBorder.none,
@@ -356,10 +480,171 @@ class _MessagePageState extends State<MessagePage> {
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+              // 发送按钮
+              InkWell(
+                onTap: _sending ? null : _sendMessage,
+                mouseCursor: SystemMouseCursors.click,
+                borderRadius: BorderRadius.circular(kRadiusFull),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: kPrimary,
+                    borderRadius: BorderRadius.circular(kRadiusFull),
+                  ),
+                  child: _sending
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : Icon(Icons.send_rounded,
+                          size: 16, color: Colors.white),
+                ),
+              ),
             ],
           ),
         ),
       ],
     );
+  }
+
+  /// 消息列表（气泡）
+  Widget _buildMessageList(Brightness b) {
+    if (_messages.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.forum_outlined, size: 40, color: textFaintColor(b)),
+            const SizedBox(height: 12),
+            Text(
+              '和好友打个招呼吧',
+              style: TextStyle(fontSize: 14, color: textSecondaryColor(b)),
+            ),
+          ],
+        ),
+      );
+    }
+    return SilkyListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      children: [
+        for (final m in _messages) _buildMessageBubble(b, m),
+      ],
+      scrollSpeed: 1.6,
+      silkyScrollDuration: const Duration(milliseconds: 600),
+      animationCurve: Curves.easeOutCubic,
+    );
+  }
+
+  Widget _buildMessageBubble(Brightness b, Map<String, dynamic> m) {
+    final senderId = (m['sender_id'] as num?)?.toInt() ?? 0;
+    final isMine = senderId == widget.currentUserId;
+    final plaintext = m['plaintext']?.toString() ?? '';
+    final createTime = (m['create_time'] as num?)?.toInt() ?? 0;
+    final timeText = _timeText(createTime);
+    final sendStatus = (m['send_status'] as num?)?.toInt() ?? 1;
+
+    final bubbleColor = isMine ? kPrimary : bgHoverColor(b);
+    final textColorB = isMine ? Colors.white : textColor(b);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment:
+            isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!isMine) ...[
+            // 对方头像
+            ClipOval(
+              child: _peerAvatar(b),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Flexible(
+            child: Column(
+              crossAxisAlignment: isMine
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
+                Container(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: bubbleColor,
+                    borderRadius: BorderRadius.circular(kRadiusMd),
+                  ),
+                  child: Text(
+                    plaintext,
+                    style: TextStyle(fontSize: 14, color: textColorB, height: 1.4),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      timeText,
+                      style: TextStyle(fontSize: 11, color: textFaintColor(b)),
+                    ),
+                    if (isMine && sendStatus == 0) ...[
+                      const SizedBox(width: 4),
+                      Icon(Icons.schedule, size: 12, color: textFaintColor(b)),
+                    ] else if (isMine && sendStatus == 2) ...[
+                      const SizedBox(width: 4),
+                      Icon(Icons.error_outline, size: 12, color: kDanger),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _peerAvatar(Brightness b) {
+    final friend = _selectedFriend;
+    final avatar = friend?['avatar']?.toString() ?? '';
+    final nickname = friend?['nickname']?.toString() ?? '';
+    return avatar.isNotEmpty
+        ? NetImage(
+            url: AppConfig.resolveUrl(avatar),
+            width: 32,
+            height: 32,
+            fit: BoxFit.cover,
+            loadingSize: 14,
+          )
+        : Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+                color: primarySoftColor(b), shape: BoxShape.circle),
+            alignment: Alignment.center,
+            child: Text(
+              nickname.isEmpty
+                  ? '?'
+                  : (nickname.length <= 2 ? nickname : nickname.substring(0, 2)),
+              style: TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w600, color: kPrimary),
+            ),
+          );
+  }
+
+  String _timeText(int ts) {
+    if (ts <= 0) return '';
+    final now = DateTime.now();
+    final t = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
+    if (t.year == now.year && t.month == now.month && t.day == now.day) {
+      final hh = t.hour.toString().padLeft(2, '0');
+      final mm = t.minute.toString().padLeft(2, '0');
+      return '$hh:$mm';
+    }
+    return '${t.month}-${t.day}';
   }
 }

@@ -32,12 +32,16 @@ class NotificationPage extends StatefulWidget {
   /// 打开帖子详情回调（macOS 内容区覆盖用，保留左侧导航栏）；非 macOS 为 null 则走 push
   final void Function(int postId, String postContent, int? commentId)? onOpenPost;
 
+  /// 打开他人主页回调（type=3 被关注通知点击跳关注人主页）
+  final void Function(int uid, String nickname, String avatar)? onOpenUserProfile;
+
   const NotificationPage({
     super.key,
     this.currentUserId = 0,
     this.onChanged,
     this.embedded = false,
     this.onOpenPost,
+    this.onOpenUserProfile,
   });
 
   @override
@@ -206,6 +210,18 @@ class _NotificationPageState extends State<NotificationPage> {
           _unread = _unread > 0 ? _unread - 1 : 0;
           _changed = true;
         });
+      }
+    }
+    // type=3 被关注通知：跳关注人主页
+    final type = (n['type'] as num?)?.toInt() ?? 0;
+    if (type == 3) {
+      final fromUid = (n['from_uid'] as num?)?.toInt() ?? 0;
+      final fromName = n['from_nickname']?.toString() ?? '';
+      final fromAvatar = n['from_avatar']?.toString() ?? '';
+      final cb = widget.onOpenUserProfile;
+      if (fromUid > 0 && cb != null) {
+        cb(fromUid, fromName, fromAvatar);
+        return;
       }
     }
     await _openPost(n);
@@ -443,8 +459,10 @@ class _NotificationPageState extends State<NotificationPage> {
     final timeText = (n['create_time_text'] as String?) ?? '';
     final avatar = (n['from_avatar'] as String?) ?? '';
 
-    // 标题文案
-    final title = type == 2 ? '$fromName 回复了你' : '$fromName 评论了你的帖子';
+    // 标题文案（type=3 被关注）
+    final title = type == 3
+        ? '$fromName 关注了你'
+        : (type == 2 ? '$fromName 回复了你' : '$fromName 评论了你的帖子');
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
