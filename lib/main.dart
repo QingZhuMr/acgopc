@@ -464,13 +464,21 @@ class _HomePageState extends State<HomePage> {
   /// 在内容区打开帖子（WS 推送/简单跳转用，保留左侧导航栏）
   void openPostInContent(int postId, String postContent, int? commentId) {
     if (!mounted) return;
+    _recordBrowseHistory(postId);
     _showPostFromNoticeOverlay(postId, postContent, commentId);
   }
 
   /// 在内容区打开帖子（完整帖子数据，保留左侧导航栏）
   void openPostFullInContent(Map<String, dynamic> post, int id) {
     if (!mounted) return;
+    _recordBrowseHistory(id);
     _showPostOverlay(post, id);
+  }
+
+  /// 上报浏览历史（静默，失败不影响打开帖子）
+  void _recordBrowseHistory(int postId) {
+    if (postId <= 0) return;
+    ApiClient.instance.addBrowseHistory(postId).ignore();
   }
 
   void _onNotifyChanged() {
@@ -1910,7 +1918,7 @@ class _ProfileViewState extends State<_ProfileView> {
     return raw.toString();
   }
 
-  // ===== 个人中心 tab：0=动态，1=收藏 =====
+  // ===== 个人中心 tab：0=动态，1=收藏，2=历史 =====
   int _profileTab = 0;
 
   // ===== 我的动态（只显示我发布的帖子） =====
@@ -1928,6 +1936,12 @@ class _ProfileViewState extends State<_ProfileView> {
   bool _favLoadingMore = false;
   bool _favAllLoaded = false;
   bool _favLoadFailed = false;
+
+  // ===== 浏览历史（最多 120 条，服务端跨设备同步） =====
+  final List<Map<String, dynamic>> _browseHistory = [];
+  bool _hisLoading = false;
+  bool _hisLoadFailed = false;
+  bool _hisDeleting = false;
 
   // ===== 对话框加载态 =====
   /// 编辑资料保存中
@@ -2141,7 +2155,7 @@ class _ProfileViewState extends State<_ProfileView> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  // ===== 个人中心 tab：动态 / 收藏（胶囊切换） =====
+                  // ===== 个人中心 tab：动态 / 收藏 / 历史（胶囊切换） =====
                   Padding(
                     padding: const EdgeInsets.only(left: 2, bottom: 12),
                     child: Row(
@@ -2158,6 +2172,13 @@ class _ProfileViewState extends State<_ProfileView> {
                           count: _favorites.length,
                           selected: _profileTab == 1,
                           onTap: () => _switchTab(1),
+                        ),
+                        const SizedBox(width: 4),
+                        _ProfileTab(
+                          label: '历史',
+                          count: _browseHistory.length,
+                          selected: _profileTab == 2,
+                          onTap: () => _switchTab(2),
                         ),
                       ],
                     ),
@@ -2196,7 +2217,7 @@ class _ProfileViewState extends State<_ProfileView> {
                       const SizedBox(height: 24),
                   ]
                   // ===== 我的收藏（小红书/抖音风格双列瀑布流） =====
-                  else ...[
+                  else if (_profileTab == 1) ...[
                     if (_favLoading && _favorites.isEmpty)
                       const _SkeletonGrid(columns: 3)
                     else if (_favLoadFailed && _favorites.isEmpty)
@@ -2222,6 +2243,50 @@ class _ProfileViewState extends State<_ProfileView> {
                       )
                     else if (!_favAllLoaded && _favorites.isNotEmpty)
                       const SizedBox(height: 24),
+                  ]
+                  // ===== 浏览历史（服务端跨设备，最多 120 条） =====
+                  else ...[
+                    if (_hisLoading && _browseHistory.isEmpty)
+                      const _SkeletonGrid(columns: 3)
+                    else if (_hisLoadFailed && _browseHistory.isEmpty)
+                      _FavRetry(label: '历史加载失败', onRetry: _loadBrowseHistory)
+                    else if (_browseHistory.isEmpty)
+                      _EmptyFavorites(
+                        b: b,
+                        icon: Icons.history_rounded,
+                        title: '还没有浏览历史',
+                        subtitle: '打开帖子详情后会自动记录在这里',
+                      )
+                    else ...[
+                      // 清空按钮（右上）
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton.icon(
+                            onPressed: _hisDeleting
+                                ? null
+                                : _clearBrowseHistory,
+                            icon: Icon(Icons.delete_outline,
+                                size: 16,
+                                color: _hisDeleting
+                                    ? textFaintColor(b)
+                                    : kDanger),
+                            label: Text(
+                              _hisDeleting ? '清空中…' : '清空历史',
+                              style: TextStyle(
+                                  fontSize: 13, color: kDanger),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      _MasonryGrid(
+                        posts: _browseHistory,
+                        columns: _favColumns(constraints.maxWidth),
+                        coverHeight: _favCoverHeight,
+                        onPostTap: (p) => _openHistoryPost(p),
+                      ),
+                    ],
                   ],
                   const SizedBox(height: 16),
                 ],
@@ -2247,6 +2312,11 @@ class _ProfileViewState extends State<_ProfileView> {
         !_favLoading &&
         !_favLoadFailed) {
       _loadFavorites();
+    } else if (idx == 2 &&
+        _browseHistory.isEmpty &&
+        !_hisLoading &&
+        !_hisLoadFailed) {
+      _loadBrowseHistory();
     }
   }
 
@@ -2254,8 +2324,10 @@ class _ProfileViewState extends State<_ProfileView> {
   void _loadProfileData() {
     if (_profileTab == 0) {
       _loadMyPosts();
-    } else {
+    } else if (_profileTab == 1) {
       _loadFavorites();
+    } else {
+      _loadBrowseHistory();
     }
   }
 
@@ -2403,6 +2475,91 @@ class _ProfileViewState extends State<_ProfileView> {
     }
   }
 
+  /// 加载浏览历史（最多 120 条，全量一次性拉取）
+  Future<void> _loadBrowseHistory() async {
+    if (_hisLoading) return;
+    setState(() {
+      _hisLoading = true;
+      _hisLoadFailed = false;
+    });
+    if (!mounted) return;
+    try {
+      final resp = await ApiClient.instance
+          .getBrowseHistory()
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (resp.statusCode == 200 && json['code'] == 0) {
+        final list = ((json['data'] ?? {})['list'] ?? []) as List;
+        setState(() {
+          _browseHistory.clear();
+          _browseHistory
+              .addAll(list.map((e) => Map<String, dynamic>.from(e)));
+          _hisLoading = false;
+        });
+      } else {
+        setState(() {
+          _hisLoading = false;
+          _hisLoadFailed = true;
+        });
+      }
+    } catch (_) {
+      setState(() {
+        _hisLoading = false;
+        _hisLoadFailed = true;
+      });
+    }
+  }
+
+  /// 清空浏览历史（弹确认框）
+  Future<void> _clearBrowseHistory() async {
+    if (_hisDeleting) return;
+    final b = Theme.of(context).brightness;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: bgColor(b),
+        title: const Text('清空浏览历史'),
+        content: const Text('确定要清空全部浏览历史吗？此操作不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('取消', style: TextStyle(color: textMutedColor(b))),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: kDanger),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _hisDeleting = true);
+    try {
+      final resp = await ApiClient.instance
+          .clearBrowseHistory()
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (resp.statusCode == 200 && json['code'] == 0) {
+        setState(() {
+          _browseHistory.clear();
+          _hisDeleting = false;
+        });
+      } else {
+        if (mounted) {
+          NotifyStack.warning(
+              json['msg']?.toString() ?? '清空失败', title: '提示');
+        }
+        setState(() => _hisDeleting = false);
+      }
+    } catch (_) {
+      if (mounted) {
+        NotifyStack.warning('清空失败，请稍后重试', title: '提示');
+      }
+      setState(() => _hisDeleting = false);
+    }
+  }
+
   /// 加载更多收藏（触底自动加载）
   Future<void> _loadMoreFavorites() async {
     if (_favLoading ||
@@ -2453,6 +2610,27 @@ class _ProfileViewState extends State<_ProfileView> {
     );
     // 从详情页返回后刷新收藏列表（可能取消了收藏）
     _loadFavorites();
+  }
+
+  /// 点击历史卡片 → 打开帖子详情（返回后刷新浏览时间排序）
+  Future<void> _openHistoryPost(Map<String, dynamic> p) async {
+    final id = (p['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return;
+    if (_HomePageState.current?.mounted == true) {
+      _HomePageState.current!.openPostFullInContent(p, id);
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PostDetailPage(
+          postBrief: p,
+          postId: id,
+          currentUserId: (_user['id'] as num?)?.toInt() ?? 0,
+        ),
+      ),
+    );
+    // 从详情页返回后刷新浏览历史（新的浏览会置顶）
+    _loadBrowseHistory();
   }
 
   // ===== 我的收藏：加载 =====

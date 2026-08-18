@@ -361,6 +361,45 @@ class ApiClient {
     );
   }
 
+  /// 浏览历史列表（业务接口）：GET 拉取当前用户浏览历史（最多 120 条）
+  ///
+  /// 字段同广场列表，另含 browse_at / browse_time_text（浏览时间）。
+  Future<http.Response> getBrowseHistory() {
+    final path = '/user/browseHistory';
+    return http.get(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
+  /// 记录浏览历史（业务接口）：POST post_id，服务端去重置顶 + 限 120 条
+  Future<http.Response> addBrowseHistory(int postId) {
+    final path = '/user/browseHistory';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'post_id': '$postId'},
+    );
+  }
+
+  /// 清空浏览历史（业务接口）：POST clear=1
+  Future<http.Response> clearBrowseHistory() {
+    final path = '/user/browseHistory';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'clear': '1'},
+    );
+  }
+
   /// 评论点赞 / 取消点赞（切换，业务接口）
   ///
   /// 返回：is_liked、like_count
