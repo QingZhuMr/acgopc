@@ -655,6 +655,7 @@ class _HomePageState extends State<HomePage> {
             onChanged: () => NotificationCenter.instance.fetchUnreadForce(),
             onOpenPost: _showPostFromNoticeOverlay,
             onOpenUserProfile: openUserProfile,
+            onOpenRelationList: openRelationList,
           ),
         ),
         _NavItem(

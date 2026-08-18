@@ -962,6 +962,19 @@ class ApiClient {
     );
   }
 
+  /// 批量删除通知（业务接口）：ids 为通知 id 数组
+  Future<http.Response> deleteNotifications({required List<int> ids}) {
+    final path = '/notification/delete';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'ids': jsonEncode(ids)},
+    );
+  }
+
   /// 一键全部已读（业务接口）
   Future<http.Response> readAllNotifications() {
     final path = '/notification/readAll';

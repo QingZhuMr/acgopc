@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import '../core/api_client.dart';
 import '../core/app_config.dart';
 import '../core/app_theme.dart';
+import '../widgets/bubble_menu.dart';
 import '../widgets/notify.dart';
 import 'post_detail_page.dart';
 
@@ -35,6 +36,9 @@ class NotificationPage extends StatefulWidget {
   /// 打开他人主页回调（type=3 被关注通知点击跳关注人主页）
   final void Function(int uid, String nickname, String avatar)? onOpenUserProfile;
 
+  /// 打开关系列表页回调（type=3 关注折叠点击 → 我的粉丝列表 tab=2）
+  final void Function(int initialTab)? onOpenRelationList;
+
   const NotificationPage({
     super.key,
     this.currentUserId = 0,
@@ -42,6 +46,7 @@ class NotificationPage extends StatefulWidget {
     this.embedded = false,
     this.onOpenPost,
     this.onOpenUserProfile,
+    this.onOpenRelationList,
   });
 
   @override
@@ -56,6 +61,10 @@ class _NotificationPageState extends State<NotificationPage> {
   bool _allLoaded = false;
   int _unread = 0;
   bool _changed = false; // 是否有未读被消费，关闭时回调通知角标刷新
+
+  /// 多选删除模式
+  bool _selectMode = false;
+  final Set<int> _selectedIds = {}; // 选中通知的 id（聚合取第一个 id 代表）
 
   @override
   void initState() {
@@ -151,23 +160,47 @@ class _NotificationPageState extends State<NotificationPage> {
     );
   }
 
-  /// 忽略（删除）单条通知
-  Future<void> _ignoreOne(Map<String, dynamic> n) async {
-    final id = (n['id'] as num?)?.toInt() ?? 0;
-    if (id <= 0) return;
-    try {
-      await ApiClient.instance
-          .readNotification(id: id)
-          .timeout(const Duration(seconds: 8));
-    } catch (_) {}
+  /// 删除通知（单条/聚合条目）：调用批量删除接口后从列表移除
+  Future<void> _deleteOne(Map<String, dynamic> n) async {
+    final ids = _idList(n);
+    if (ids.isEmpty) return;
+    await _deleteIds(ids);
     if (mounted) {
+      final isRead = (n['is_read'] as num?)?.toInt() ?? 0;
       setState(() {
-        _notifications.removeWhere((e) => e['id'] == id);
-        _unread = _unread > 0 ? _unread - 1 : 0;
+        _notifications.removeWhere((e) => _idList(e).toSet().containsAll(ids));
+        if (isRead == 0) {
+          _unread = _unread > ids.length ? _unread - ids.length : 0;
+        }
         _changed = true;
       });
     }
-    _toast('已忽略该通知');
+    _toast('已删除通知');
+  }
+
+  /// 批量删除（多选模式）：ids 为通知 id 集合
+  Future<void> _deleteMany(List<int> ids) async {
+    if (ids.isEmpty) return;
+    final idSet = ids.toSet();
+    await _deleteIds(ids);
+    if (mounted) {
+      setState(() {
+        _notifications.removeWhere(
+            (e) => _idList(e).any((id) => idSet.contains(id)));
+        _unread = 0; // 简化：删除后刷新未读
+        _changed = true;
+      });
+    }
+    _toast('已删除所选通知');
+  }
+
+  /// 调后端批量删除接口
+  Future<void> _deleteIds(List<int> ids) async {
+    try {
+      await ApiClient.instance
+          .deleteNotifications(ids: ids)
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
   }
 
   /// 一键全部已读
@@ -193,28 +226,36 @@ class _NotificationPageState extends State<NotificationPage> {
     _toast('已全部标为已读');
   }
 
-  /// 点击单条通知：标记该条已读 + 跳转帖子
+  /// 点击单条通知：标记聚合内所有 id 已读 + 跳转
   Future<void> _onTapNotify(Map<String, dynamic> n) async {
-    final id = (n['id'] as num?)?.toInt() ?? 0;
+    final ids = _idList(n);
     final isRead = (n['is_read'] as num?)?.toInt() ?? 0;
-    // 未读则先标记已读
-    if (id > 0 && isRead == 0) {
+    // 未读则先标记聚合内所有通知已读
+    if (ids.isNotEmpty && isRead == 0) {
       try {
-        await ApiClient.instance
-            .readNotification(id: id)
-            .timeout(const Duration(seconds: 8));
+        for (final id in ids) {
+          await ApiClient.instance
+              .readNotification(id: id)
+              .timeout(const Duration(seconds: 8));
+        }
       } catch (_) {}
       if (mounted) {
         setState(() {
           n['is_read'] = 1;
-          _unread = _unread > 0 ? _unread - 1 : 0;
+          _unread = _unread > ids.length ? _unread - ids.length : 0;
           _changed = true;
         });
       }
     }
-    // type=3 被关注通知：跳关注人主页
+    // type=3 被关注通知：聚合 → 跳我的粉丝列表；单条 → 跳关注人主页
     final type = (n['type'] as num?)?.toInt() ?? 0;
+    final count = (n['count'] as num?)?.toInt() ?? 1;
     if (type == 3) {
+      final relationCb = widget.onOpenRelationList;
+      if (count > 1 && relationCb != null) {
+        relationCb(2); // 我的粉丝列表 tab=2
+        return;
+      }
       final fromUid = (n['from_uid'] as num?)?.toInt() ?? 0;
       final fromName = n['from_nickname']?.toString() ?? '';
       final fromAvatar = n['from_avatar']?.toString() ?? '';
@@ -225,6 +266,19 @@ class _NotificationPageState extends State<NotificationPage> {
       }
     }
     await _openPost(n);
+  }
+
+  /// 取通知条目对应的通知 id 列表（聚合条目用 id_list，单条为 [id]）
+  List<int> _idList(Map<String, dynamic> n) {
+    final idList = n['id_list'];
+    if (idList is List && idList.isNotEmpty) {
+      return idList
+          .map((e) => (e as num?)?.toInt() ?? 0)
+          .where((e) => e > 0)
+          .toList();
+    }
+    final id = (n['id'] as num?)?.toInt() ?? 0;
+    return id > 0 ? [id] : [];
   }
 
   void _toast(String msg) {
@@ -281,12 +335,36 @@ class _NotificationPageState extends State<NotificationPage> {
               ),
             ),
           const Spacer(),
-          TextButton.icon(
-            onPressed: _readAll,
-            style: TextButton.styleFrom(foregroundColor: kPrimary),
-            icon: const Icon(Icons.done_all_rounded, size: 16),
-            label: const Text('全部已读', style: TextStyle(fontSize: 13)),
-          ),
+          if (_selectMode) ...[
+            TextButton.icon(
+              onPressed: () => setState(() {
+                _selectMode = false;
+                _selectedIds.clear();
+              }),
+              style: TextButton.styleFrom(foregroundColor: textMutedColor(b)),
+              icon: const Icon(Icons.close_rounded, size: 16),
+              label: const Text('取消', style: TextStyle(fontSize: 13)),
+            ),
+            TextButton.icon(
+              onPressed: _selectedIds.isEmpty
+                  ? null
+                  : () => _deleteMany(_selectedIds.toList()),
+              style: TextButton.styleFrom(
+                  foregroundColor:
+                      _selectedIds.isEmpty ? textFaintColor(b) : kDanger),
+              icon: const Icon(Icons.delete_rounded, size: 16),
+              label: Text(
+                '删除所选${_selectedIds.isEmpty ? '' : '(${_selectedIds.length})'}',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+          ] else
+            TextButton.icon(
+              onPressed: _readAll,
+              style: TextButton.styleFrom(foregroundColor: kPrimary),
+              icon: const Icon(Icons.done_all_rounded, size: 16),
+              label: const Text('全部已读', style: TextStyle(fontSize: 13)),
+            ),
         ],
       ),
     );
@@ -327,12 +405,41 @@ class _NotificationPageState extends State<NotificationPage> {
           ),
       ],
     );
-    final readAllBtn = TextButton.icon(
-      onPressed: _readAll,
-      style: TextButton.styleFrom(foregroundColor: kPrimary),
-      icon: const Icon(Icons.done_all_rounded, size: 16),
-      label: const Text('全部已读', style: TextStyle(fontSize: 13)),
-    );
+    final readAllBtn = _selectMode
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton.icon(
+                onPressed: () => setState(() {
+                  _selectMode = false;
+                  _selectedIds.clear();
+                }),
+                style:
+                    TextButton.styleFrom(foregroundColor: textMutedColor(b)),
+                icon: const Icon(Icons.close_rounded, size: 16),
+                label: const Text('取消', style: TextStyle(fontSize: 13)),
+              ),
+              TextButton.icon(
+                onPressed: _selectedIds.isEmpty
+                    ? null
+                    : () => _deleteMany(_selectedIds.toList()),
+                style: TextButton.styleFrom(
+                    foregroundColor:
+                        _selectedIds.isEmpty ? textFaintColor(b) : kDanger),
+                icon: const Icon(Icons.delete_rounded, size: 16),
+                label: Text(
+                  '删除所选${_selectedIds.isEmpty ? '' : '(${_selectedIds.length})'}',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
+          )
+        : TextButton.icon(
+            onPressed: _readAll,
+            style: TextButton.styleFrom(foregroundColor: kPrimary),
+            icon: const Icon(Icons.done_all_rounded, size: 16),
+            label: const Text('全部已读', style: TextStyle(fontSize: 13)),
+          );
     // macOS：预留红黄绿按钮安全距离，去掉窗口控制按钮，保留功能按钮 + 拖拽区
     if (Platform.isMacOS) {
       return SizedBox(
@@ -450,6 +557,12 @@ class _NotificationPageState extends State<NotificationPage> {
     );
   }
 
+  /// 条目标识（聚合条目取 id_list 第一个）
+  int _itemKey(Map<String, dynamic> n) {
+    final ids = _idList(n);
+    return ids.isNotEmpty ? ids.first : ((n['id'] as num?)?.toInt() ?? 0);
+  }
+
   Widget _buildNotifyItem(Brightness b, Map<String, dynamic> n) {
     final isRead = (n['is_read'] as num?)?.toInt() == 1;
     final type = (n['type'] as num?)?.toInt() ?? 1;
@@ -458,124 +571,194 @@ class _NotificationPageState extends State<NotificationPage> {
     final postContent = (n['post_content'] as String?) ?? '';
     final timeText = (n['create_time_text'] as String?) ?? '';
     final avatar = (n['from_avatar'] as String?) ?? '';
+    final key = _itemKey(n);
+    final selected = _selectedIds.contains(key);
 
-    // 标题文案（type=3 被关注）
-    final title = type == 3
-        ? '$fromName 关注了你'
-        : (type == 2 ? '$fromName 回复了你' : '$fromName 评论了你的帖子');
+    // 标题文案（type=3 被关注；聚合条目 from_nickname 已含"xxx、xxx等N人"）
+    String title;
+    switch (type) {
+      case 3:
+        title = '$fromName 关注了你';
+        break;
+      case 4:
+        title = '$fromName 赞了你的动态';
+        break;
+      case 5:
+        title = '$fromName 收藏了你的动态';
+        break;
+      case 2:
+        title = '$fromName 回复了你';
+        break;
+      default:
+        title = '$fromName 评论了你的动态';
+    }
+
+    // 右键菜单：多选 / 删除本条
+    final menuItems = <BubbleMenuItem>[
+      BubbleMenuItem(
+        label: _selectMode ? '退出多选' : '多选删除',
+        icon: _selectMode
+            ? Icons.check_circle_outline_rounded
+            : Icons.library_add_check_rounded,
+        onTap: () => setState(() {
+          if (_selectMode) {
+            _selectMode = false;
+            _selectedIds.clear();
+          } else {
+            _selectMode = true;
+            _selectedIds.add(key);
+          }
+        }),
+      ),
+      BubbleMenuItem(
+        label: '删除',
+        icon: Icons.delete_outline_rounded,
+        onTap: () => _deleteOne(n),
+      ),
+    ];
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
-        color: isRead ? bgColor(b) : primarySoftColor(b),
-        borderRadius: BorderRadius.circular(kRadiusBtn),
-        child: InkWell(
+      child: BubbleMenu(
+        triggerOnRightClick: true,
+        items: menuItems,
+        child: Material(
+          color: selected
+              ? primarySoftColor(b)
+              : (isRead ? bgColor(b) : primarySoftColor(b)),
           borderRadius: BorderRadius.circular(kRadiusBtn),
-          mouseCursor: SystemMouseCursors.click, // 悬停显示手指
-          onTap: () => _onTapNotify(n),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 触发者头像
-                _NotifyAvatar(avatar: avatar, name: fromName, size: 40),
-                const SizedBox(width: 12),
-                // 中部：标题 + 内容
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          if (!isRead)
-                            Container(
-                              width: 8,
-                              height: 8,
-                              margin: const EdgeInsets.only(right: 6),
-                              decoration: const BoxDecoration(
-                                color: kDanger,
-                                shape: BoxShape.circle,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(kRadiusBtn),
+            mouseCursor: SystemMouseCursors.click, // 悬停显示手指
+            onTap: () {
+              if (_selectMode) {
+                setState(() {
+                  if (selected) {
+                    _selectedIds.remove(key);
+                  } else {
+                    _selectedIds.add(key);
+                  }
+                });
+              } else {
+                _onTapNotify(n);
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 多选模式：左侧选择框
+                  if (_selectMode) ...[
+                    Icon(
+                      selected
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      size: 18,
+                      color: selected ? kPrimary : textFaintColor(b),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  // 触发者头像
+                  _NotifyAvatar(avatar: avatar, name: fromName, size: 40),
+                  const SizedBox(width: 12),
+                  // 中部：标题 + 内容
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            if (!isRead)
+                              Container(
+                                width: 8,
+                                height: 8,
+                                margin: const EdgeInsets.only(right: 6),
+                                decoration: const BoxDecoration(
+                                  color: kDanger,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            Expanded(
+                              child: Text(
+                                title,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: isRead
+                                      ? FontWeight.w500
+                                      : FontWeight.w600,
+                                  // 未读标题醒目，已读变灰
+                                  color: isRead
+                                      ? textMutedColor(b)
+                                      : textColor(b),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                          Expanded(
-                            child: Text(
-                              title,
+                            Text(
+                              timeText,
                               style: TextStyle(
-                                fontSize: 14,
-                                fontWeight:
-                                    isRead ? FontWeight.w500 : FontWeight.w600,
-                                // 未读标题醒目，已读变灰
+                                  fontSize: 12, color: textFaintColor(b)),
+                            ),
+                          ],
+                        ),
+                        if (commentContent.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            commentContent,
+                            style: TextStyle(
+                              fontSize: 13,
+                              // 未读正文正常色，已读降为弱化色
+                              color: isRead
+                                  ? textFaintColor(b)
+                                  : textSecondaryColor(b),
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        // 次级小字：所在帖子内容
+                        if (postContent.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: bgHoverColor(b),
+                              borderRadius: BorderRadius.circular(kRadiusSm),
+                            ),
+                            child: Text(
+                              '帖子：$postContent',
+                              style: TextStyle(
+                                fontSize: 12,
+                                // 未读帖子内容正常灰，已读更淡
                                 color: isRead
-                                    ? textMutedColor(b)
-                                    : textColor(b),
+                                    ? textFaintColor(b)
+                                    : textMutedColor(b),
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          Text(
-                            timeText,
-                            style: TextStyle(
-                                fontSize: 12, color: textFaintColor(b)),
-                          ),
                         ],
-                      ),
-                      if (commentContent.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          commentContent,
-                          style: TextStyle(
-                            fontSize: 13,
-                            // 未读正文正常色，已读降为弱化色
-                            color: isRead
-                                ? textFaintColor(b)
-                                : textSecondaryColor(b),
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
                       ],
-                      // 次级小字：所在帖子内容
-                      if (postContent.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: bgHoverColor(b),
-                            borderRadius: BorderRadius.circular(kRadiusSm),
-                          ),
-                          child: Text(
-                            '帖子：$postContent',
-                            style: TextStyle(
-                              fontSize: 12,
-                              // 未读帖子内容正常灰，已读更淡
-                              color: isRead
-                                  ? textFaintColor(b)
-                                  : textMutedColor(b),
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
-                ),
-                // 忽略按钮（仅未读显示：忽略 = 标为已读并移出列表）
-                if (!isRead) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: '忽略该通知',
-                    icon: Icon(Icons.close_rounded,
-                        size: 18, color: textFaintColor(b)),
-                    onPressed: () => _ignoreOne(n),
-                  ),
+                  // 多选模式：删除所选按钮；普通模式：无操作（右键删除）
+                  if (_selectMode) ...[
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: '删除所选',
+                      icon: Icon(Icons.delete_rounded,
+                          size: 18, color: kDanger),
+                      onPressed: () => _deleteMany(_selectedIds.toList()),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
