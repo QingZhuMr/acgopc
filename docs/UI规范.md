@@ -333,7 +333,14 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - **隐私设置页**（`pages/privacy_settings_page.dart`，由省略号菜单「隐私设置」进入）：以 **内容区覆盖模式**打开（通过 `_HomePageState._macOverlay`，`embedded: true`），**保留左侧导航栏、不遮挡整个窗口**。内嵌标题栏与发布页/详情页一致（高 48、标题 15px/w600、macOS 风格返回按钮），顶部距离由宿主 `_TitleBar` 承担；内容区可滚动用 `SilkyListView`。**全屏模式**（`embedded: false`）遵守双端顶距规范（Win 顶距 5px / macOS 20px、标题 20px/w600、左右 24px）。
   - **主页可见性**：一张卡片（`bgHoverColor` + `kRadiusMd` 圆角）内含两项开关（动态/收藏），每项为自绘行：标题（14px/w600）+ 副标题（12px `textMutedColor`）+ 右侧 Material `Switch`（`activeThumbColor: kPrimary`，保存中禁用）。**开关即改即存**（调 `user/privacy`），失败回滚并提示。对应后端 `privacy_posts`/`privacy_favorites`（1公开 0仅自己），为访问他人主页功能提供可见性依据。
 
-## 10.2 他人个人中心页
+## 10.2 消息页（好友列表 + 聊天）
+
+- **入口**：左侧导航「广场」上方「消息」项（图标 `Icons.chat_bubble_outline_rounded`），页面内嵌于左侧导航栏（不 push、无返回按钮）。
+- **布局**：左右分栏——左侧好友列表（宽 260px，`bgHoverColor` 底 + 右侧分隔线 `textFaintColor.withValues(alpha:.3)`）；右侧聊天区。
+- **好友列表**：标题「好友」（16px/w600）；好友项 = 头像（40px 圆形）+ 昵称（14px/w500）；选中项 `primarySoftColor` 底；空态「还没有好友 / 互相关注后即可成为好友」；分页加载（page_size=50，触底加载更多）。**好友 = 互相关注**（`/api/user/friends`）。
+- **聊天区**（第二期实现）：当前占位「选择一个好友开始聊天」；选中好友后右侧显示聊天对象标题栏（头像 32px + 昵称 15px/w600）+ 消息区 + 输入区（禁用）。
+
+## 10.3 他人个人中心页
 
 - **入口**（`main.dart` 内 `UserProfilePage`，内容区覆盖打开，`embedded: true`，保留左侧导航栏）：帖子详情页**点击他人头像/昵称**、评论里**@昵称（含楼中楼）**进入。由 `_HomePageState.openUserProfile(uid, nickname, avatar)` 实现。
 - **标题栏**：与帖子详情页等**二级页面一致**（embedded：高 48、水平 8px、macOS 风格返回按钮 40x40/`kRadiusMd` 圆角/`arrow_back_ios_new_rounded` 16px、标题 15px/w600）；**标题 = 「昵称的主页」**；右上角省略号 `BubbleMenu` = 举报。
