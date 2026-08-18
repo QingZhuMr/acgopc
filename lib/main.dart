@@ -624,6 +624,19 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /// 在内容区打开关系列表页（互相关注/关注/粉丝，保留左侧导航栏，不遮挡）
+  void openRelationList(int initialTab) {
+    if (!mounted) return;
+    setState(() {
+      _macOverlay = RelationListPage(
+        initialTab: initialTab,
+        embedded: true,
+        onBack: () => setState(() => _macOverlay = null),
+        onOpenUserProfile: openUserProfile,
+      );
+    });
+  }
+
   /// 打开个人中心
   ///
   /// 目标用户 = 自己：切换左侧导航到「我的」tab（并清空内容区覆盖层）；
@@ -1985,17 +1998,9 @@ class _ProfileViewState extends State<_ProfileView> {
     }
   }
 
-  /// 打开关系列表页（二级页面，默认 tab 由入口决定：0=互相关注 1=关注 2=粉丝）
+  /// 打开关系列表页（内容区覆盖，保留左侧导航栏；默认 tab 由入口决定：0=互相关注 1=关注 2=粉丝）
   void _openRelationList(int initialTab) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => RelationListPage(
-          initialTab: initialTab,
-          onOpenUserProfile: (uid, nickname, avatar) =>
-              _HomePageState.current?.openUserProfile(uid, nickname, avatar),
-        ),
-      ),
-    );
+    _HomePageState.current?.openRelationList(initialTab);
   }
 
   /// 用户 UID（用户 id）

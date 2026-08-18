@@ -23,10 +23,18 @@ class RelationListPage extends StatefulWidget {
   /// 点击用户 → 打开他人主页（由宿主 `_HomePageState` 传入，内容区覆盖）
   final void Function(int uid, String nickname, String avatar)? onOpenUserProfile;
 
+  /// 是否以内嵌模式展示（内容区覆盖，保留左侧导航栏）
+  final bool embedded;
+
+  /// 内嵌模式下点击返回按钮的回调（由宿主清空内容区覆盖层）
+  final VoidCallback? onBack;
+
   const RelationListPage({
     super.key,
     this.initialTab = 1,
     this.onOpenUserProfile,
+    this.embedded = false,
+    this.onBack,
   });
 
   @override
@@ -205,7 +213,13 @@ class _RelationListPageState extends State<RelationListPage> {
               height: 40,
               child: InkWell(
                 borderRadius: BorderRadius.circular(kRadiusMd),
-                onTap: () => Navigator.of(context).maybePop(),
+                onTap: () {
+                  if (widget.onBack != null) {
+                    widget.onBack!();
+                  } else {
+                    Navigator.of(context).maybePop();
+                  }
+                },
                 mouseCursor: SystemMouseCursors.click,
                 hoverColor: bgHoverColor(b),
                 child: Center(
