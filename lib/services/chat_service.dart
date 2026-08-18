@@ -69,11 +69,16 @@ class ChatService {
       }
     }
     if (pub == null || pub.isEmpty) {
-      return (msgId: 0, ok: false, error: '对方尚未初始化聊天密钥');
+      return (msgId: 0, ok: false, error: '对方尚未开启聊天');
     }
 
-    // 加密
-    final encrypted = ChatCrypto.encrypt(plaintext, pub);
+    // 加密（密钥格式非法等异常容错）
+    late final dynamic encrypted;
+    try {
+      encrypted = ChatCrypto.encrypt(plaintext, pub);
+    } catch (_) {
+      return (msgId: 0, ok: false, error: '对方聊天密钥无效，暂无法发送');
+    }
 
     // 本地暂存（发送中）
     await ChatStore.instance.upsertMessage(

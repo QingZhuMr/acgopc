@@ -43,5 +43,7 @@ void main() {
       ),
       throwsA(anything),
     );
+    // 修 unused：断言两个密钥对不同
+    expect(a.privateKey, isNot(b.privateKey));
   });
 }
