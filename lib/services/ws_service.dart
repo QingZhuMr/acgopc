@@ -76,6 +76,10 @@ class WsService {
   final _chatMsgCtrl = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get onChatMessage => _chatMsgCtrl.stream;
 
+  /// 已读回执流（收到 chat_read 推送，对方读了消息）
+  final _chatReadCtrl = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onChatRead => _chatReadCtrl.stream;
+
   /// 连接状态回调（可选，用于 UI 展示）
   void Function(bool connected)? onConnectionChange;
 
@@ -261,6 +265,13 @@ class WsService {
         final message = msg['message'];
         if (message is Map<String, dynamic>) {
           _chatMsgCtrl.add(message);
+        }
+        break;
+
+      case 'chat_read':
+        final read = msg['read'];
+        if (read is Map<String, dynamic>) {
+          _chatReadCtrl.add(read);
         }
         break;
 

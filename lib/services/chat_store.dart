@@ -290,6 +290,30 @@ class ChatStore {
     );
   }
 
+  /// 标记某会话所有消息已读（打开会话时调用）
+  Future<void> markChatRead(String chatId, int myUid) async {
+    final db = await _database;
+    await db.update(
+      'local_chat_message',
+      {'send_status': 1},
+      where: 'chat_id = ? AND sender_id != ? AND send_status = ?',
+      whereArgs: [chatId, myUid, 0],
+    );
+  }
+
+  /// 更新某条消息状态（服务端已读回执后标记）
+  Future<void> markMessagesReadByMsgIds(
+      String chatId, int myUid, int upToMsgId) async {
+    final db = await _database;
+    // 本地 seq 小于等于 upToMsgId 且来自对方的消息标记已读
+    await db.update(
+      'local_chat_message',
+      {'send_status': 1},
+      where: 'chat_id = ? AND sender_id != ? AND msg_id > 0 AND msg_id <= ?',
+      whereArgs: [chatId, myUid, upToMsgId],
+    );
+  }
+
   /// 保存密钥对
   Future<void> saveKeyPair({
     required int userId,

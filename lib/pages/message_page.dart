@@ -35,6 +35,12 @@ class _MessagePageState extends State<MessagePage> {
   bool _allLoaded = false;
   bool _loadFailed = false;
 
+  /// 左侧视图：0=会话 1=好友
+  int _viewMode = 0;
+
+  /// 本地会话列表（最近消息 + 未读）
+  List<Map<String, dynamic>> _conversations = [];
+
   /// 当前选中好友
   Map<String, dynamic>? _selectedFriend;
 
@@ -48,18 +54,42 @@ class _MessagePageState extends State<MessagePage> {
   bool _sending = false;
 
   StreamSubscription<Map<String, dynamic>>? _chatSub;
+  StreamSubscription<Map<String, dynamic>>? _chatReadSub;
 
   @override
   void initState() {
     super.initState();
     _loadFriends();
+    _loadConversations();
+    // 全局监听聊天新消息：刷新会话列表 + 未读
+    _chatReadSub = WsService.instance.onChatRead.listen((read) {
+      if (!mounted) return;
+      final readMsgId = (read['msg_id'] as num?)?.toInt() ?? 0;
+      final readerId = (read['user_id'] as num?)?.toInt() ?? 0;
+      if (readMsgId > 0) {
+        // 对方已读我的消息：更新本地已读状态
+        final chatId = read['chat_id']?.toString() ?? '';
+        ChatStore.instance.markMessagesReadByMsgIds(chatId, readerId, readMsgId);
+        if (chatId.isNotEmpty && _selectedFriend != null) {
+          _loadLocalMessages();
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
     _chatSub?.cancel();
+    _chatReadSub?.cancel();
     _inputCtrl.dispose();
     super.dispose();
+  }
+
+  /// 加载本地会话列表
+  Future<void> _loadConversations() async {
+    final rows = await ChatStore.instance.getConversations();
+    if (!mounted) return;
+    setState(() => _conversations = rows);
   }
 
   Future<void> _loadFriends() async {
@@ -135,14 +165,16 @@ class _MessagePageState extends State<MessagePage> {
       _peerPublicKey = null;
     });
     _chatSub?.cancel();
-    // 监听 WS 新消息
+    // 监听 WS 新消息：刷新会话列表 + 当前会话重新加载
     _chatSub = WsService.instance.onChatMessage.listen((msg) {
       if (!mounted) return;
       final peerId = (msg['sender_id'] as num?)?.toInt() ?? 0;
       final selectedUid = (_selectedFriend?['user_id'] as num?)?.toInt() ?? 0;
       if (peerId == selectedUid) {
         _loadLocalMessages();
+        _reportReadUpTo(msg);
       }
+      _loadConversations();
     });
 
     try {
@@ -156,19 +188,47 @@ class _MessagePageState extends State<MessagePage> {
         _peerPublicKey = keyMap['${friend['user_id']}']?.toString();
       }
       // 拉历史
-      await ChatService.instance.pullHistory(
-        peerId: (friend['user_id'] as num?)?.toInt() ?? 0,
-      );
-      // 打开会话：清零本地未读
-      final myUid = widget.currentUserId;
       final peerId = (friend['user_id'] as num?)?.toInt() ?? 0;
+      await ChatService.instance.pullHistory(peerId: peerId);
+      // 打开会话：清零本地未读 + 标记本地消息已读 + 上报服务器
+      final myUid = widget.currentUserId;
       final chatId =
           '${myUid < peerId ? myUid : peerId}_${myUid < peerId ? peerId : myUid}';
       await ChatStore.instance.clearUnread(chatId);
+      await ChatStore.instance.markChatRead(chatId, myUid);
+      _reportReadUpTo(null);
+      _loadConversations();
       _loadLocalMessages();
     } catch (_) {
       _loadLocalMessages();
     }
+  }
+
+  /// 上报已读：把当前会话对方发来的最大消息 id 发给服务器
+  Future<void> _reportReadUpTo(Map<String, dynamic>? justReceived) async {
+    final friend = _selectedFriend;
+    if (friend == null) return;
+    final peerId = (friend['user_id'] as num?)?.toInt() ?? 0;
+    if (peerId <= 0) return;
+    // 找当前会话中对方发来的最大 msg_id
+    final myUid = widget.currentUserId;
+    final chatId = '${myUid < peerId ? myUid : peerId}_${myUid < peerId ? peerId : myUid}';
+    final rows = await ChatStore.instance.getMessages(chatId, limit: 500);
+    int maxMsgId = 0;
+    for (final r in rows) {
+      final sender = (r['sender_id'] as num?)?.toInt() ?? 0;
+      final msgId = (r['msg_id'] as num?)?.toInt() ?? 0;
+      if (sender != myUid && msgId > maxMsgId) maxMsgId = msgId;
+    }
+    final justId = (justReceived?['id'] as num?)?.toInt() ?? 0;
+    if (justId > maxMsgId) maxMsgId = justId;
+    if (maxMsgId <= 0) return;
+    // 静默上报
+    try {
+      await ApiClient.instance
+          .markChatRead(peerId: peerId, msgId: maxMsgId)
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {}
   }
 
   Future<void> _loadLocalMessages() async {
@@ -205,6 +265,7 @@ class _MessagePageState extends State<MessagePage> {
       NotifyStack.warning(result.error, title: '提示');
     }
     await _loadLocalMessages();
+    await _loadConversations();
   }
 
   /// 发送消息（乐观更新 + 异步发送，幂等 client_msg_id）
@@ -253,6 +314,7 @@ class _MessagePageState extends State<MessagePage> {
     }
     setState(() => _sending = false);
     await _loadLocalMessages();
+    await _loadConversations();
   }
 
   @override
@@ -270,20 +332,21 @@ class _MessagePageState extends State<MessagePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 列表标题
+                // 会话 / 好友 视图切换
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-                  child: Text(
-                    '好友',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: textColor(b),
-                    ),
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                  child: Row(
+                    children: [
+                      _viewSwitch(b, 0, '会话'),
+                      const SizedBox(width: 4),
+                      _viewSwitch(b, 1, '好友'),
+                    ],
                   ),
                 ),
                 Expanded(
-                  child: _buildFriendList(b),
+                  child: _viewMode == 0
+                      ? _buildConversationList(b)
+                      : _buildFriendList(b),
                 ),
               ],
             ),
@@ -293,6 +356,170 @@ class _MessagePageState extends State<MessagePage> {
             child: _buildChatArea(b),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 视图切换胶囊按钮
+  Widget _viewSwitch(Brightness b, int mode, String label) {
+    final selected = _viewMode == mode;
+    return InkWell(
+      onTap: () {
+        if (_viewMode == mode) return;
+        setState(() => _viewMode = mode);
+        if (mode == 1) _loadFriends();
+      },
+      mouseCursor: SystemMouseCursors.click,
+      borderRadius: BorderRadius.circular(kRadiusFull),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected ? primarySoftColor(b) : Colors.transparent,
+          borderRadius: BorderRadius.circular(kRadiusFull),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            color: selected ? kPrimary : textSecondaryColor(b),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 会话列表（本地驱动：最近消息 + 未读）
+  Widget _buildConversationList(Brightness b) {
+    if (_conversations.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.chat_bubble_rounded, size: 40, color: textFaintColor(b)),
+            const SizedBox(height: 12),
+            Text(
+              '还没有会话',
+              style: TextStyle(fontSize: 14, color: textSecondaryColor(b)),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '去「好友」里找好友开始聊天吧',
+              style: TextStyle(fontSize: 12, color: textMutedColor(b)),
+            ),
+          ],
+        ),
+      );
+    }
+    return SilkyListView(
+      children: [
+        for (final c in _conversations) _buildConversationItem(b, c),
+      ],
+      scrollSpeed: 1.6,
+      silkyScrollDuration: const Duration(milliseconds: 600),
+      animationCurve: Curves.easeOutCubic,
+    );
+  }
+
+  /// 会话项：头像 + 昵称 + 最后消息 + 未读 + 时间
+  Widget _buildConversationItem(Brightness b, Map<String, dynamic> c) {
+    final peerId = (c['peer_id'] as num?)?.toInt() ?? 0;
+    final nickname = c['peer_nickname']?.toString() ?? '好友';
+    final avatar = c['peer_avatar']?.toString() ?? '';
+    final lastText = c['last_msg_text']?.toString() ?? '';
+    final unread = (c['unread_count'] as num?)?.toInt() ?? 0;
+    final lastTime = (c['last_msg_time'] as num?)?.toInt() ?? 0;
+    final selected = _selectedFriend?['user_id'] == peerId;
+
+    final friend = {
+      'user_id': peerId,
+      'nickname': nickname,
+      'avatar': avatar,
+    };
+    return InkWell(
+      onTap: () => _selectFriend(friend),
+      hoverColor: bgHoverColor(b),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        color: selected ? primarySoftColor(b) : Colors.transparent,
+        child: Row(
+          children: [
+            ClipOval(
+              child: avatar.isNotEmpty
+                  ? NetImage(
+                      url: AppConfig.resolveUrl(avatar),
+                      width: 40,
+                      height: 40,
+                      fit: BoxFit.cover,
+                      loadingSize: 16,
+                    )
+                  : _avatarPlaceholder(b, nickname),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          nickname,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: textColor(b),
+                          ),
+                        ),
+                      ),
+                      if (lastTime > 0)
+                        Text(
+                          _timeText(lastTime),
+                          style: TextStyle(
+                              fontSize: 11, color: textFaintColor(b)),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          lastText,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: textMutedColor(b),
+                          ),
+                        ),
+                      ),
+                      if (unread > 0) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: kDanger,
+                            borderRadius: BorderRadius.circular(kRadiusFull),
+                          ),
+                          child: Text(
+                            unread > 99 ? '99+' : '$unread',
+                            style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

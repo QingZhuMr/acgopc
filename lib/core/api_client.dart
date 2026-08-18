@@ -583,6 +583,24 @@ class ApiClient {
     );
   }
 
+  /// 标记已读（业务接口）
+  ///
+  /// POST peer_id、msg_id（读到哪条），服务端记录并 WS 推送 chat_read
+  Future<http.Response> markChatRead({
+    required int peerId,
+    required int msgId,
+  }) {
+    final path = '/chat/read';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'peer_id': '$peerId', 'msg_id': '$msgId'},
+    );
+  }
+
   /// 评论点赞 / 取消点赞（切换，业务接口）
   ///
   /// 返回：is_liked、like_count
