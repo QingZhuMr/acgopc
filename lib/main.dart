@@ -3498,17 +3498,18 @@ class _UserProfilePageState extends State<UserProfilePage> {
   }
 
   /// 关注按钮（互相关注 → "互相关注"；已关注 → "已关注"；未关注 → "关注"）
+  /// 已关注/互相关注：胶囊 + 左侧导航栏背景色（bgSoftColor）；未关注：kPrimary 蓝底
   Widget _buildFollowButton(Brightness b) {
     final String label;
     final Color bg;
     final Color fg;
     if (_isMutual) {
       label = '互相关注';
-      bg = bgHoverColor(b);
+      bg = bgSoftColor(b);
       fg = textColor(b);
     } else if (_isFollowing) {
       label = '已关注';
-      bg = bgHoverColor(b);
+      bg = bgSoftColor(b);
       fg = textColor(b);
     } else {
       label = '关注';
@@ -3518,12 +3519,12 @@ class _UserProfilePageState extends State<UserProfilePage> {
     return InkWell(
       onTap: _followBusy ? null : _toggleFollow,
       mouseCursor: SystemMouseCursors.click,
-      borderRadius: BorderRadius.circular(kRadiusBtn),
+      borderRadius: BorderRadius.circular(kRadiusFull),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
         decoration: BoxDecoration(
           color: bg,
-          borderRadius: BorderRadius.circular(kRadiusBtn),
+          borderRadius: BorderRadius.circular(kRadiusFull),
         ),
         child: _followBusy
             ? SizedBox(
