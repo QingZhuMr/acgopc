@@ -15,6 +15,10 @@ class MainFlutterWindow: NSWindow {
     let registrar = flutterViewController.registrar(forPlugin: "PhotoPickerPlugin")
     PhotoPickerPlugin.register(with: registrar)
 
+    // 注册系统通知插件（UNUserNotificationCenter，替换 local_notifier 的废弃 API）
+    let notifyRegistrar = flutterViewController.registrar(forPlugin: "SystemNotificationPlugin")
+    SystemNotificationPlugin.register(with: notifyRegistrar)
+
     super.awakeFromNib()
   }
 }

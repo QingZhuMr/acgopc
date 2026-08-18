@@ -24,6 +24,7 @@
 		2DE80F58E06DF5AD5DE2EC2A /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 363A8FAA63B2C5451F87D448 /* Pods_Runner.framework */; };
 		331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C80D7294CF71000263BE5 /* RunnerTests.swift */; };
 		8A4B7C2D9E1F3A5B6C7D8EA0 /* PhotoPickerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A4B7C2D9E1F3A5B6C7D8E9F /* PhotoPickerPlugin.swift */; };
+		8A4B7C2D9E1F3A5B6C7D8EB1 /* SystemNotificationPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A4B7C2D9E1F3A5B6C7D8EB0 /* SystemNotificationPlugin.swift */; };
 		335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */; };
 		33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC10F02044A3C60003C045 /* AppDelegate.swift */; };
 		33CC10F32044A3C60003C045 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 33CC10F22044A3C60003C045 /* Assets.xcassets */; };
@@ -71,6 +72,7 @@
 		333000ED22D3DE5D00554162 /* Warnings.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Warnings.xcconfig; sourceTree = "<group>"; };
 		335BBD1A22A9A15E00E9071D /* GeneratedPluginRegistrant.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GeneratedPluginRegistrant.swift; sourceTree = "<group>"; };
 		8A4B7C2D9E1F3A5B6C7D8E9F /* PhotoPickerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPickerPlugin.swift; sourceTree = "<group>"; };
+		8A4B7C2D9E1F3A5B6C7D8EB0 /* SystemNotificationPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemNotificationPlugin.swift; sourceTree = "<group>"; };
 		33CC10ED2044A3C60003C045 /* acgopc.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = acgopc.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		33CC10F02044A3C60003C045 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		33CC10F22044A3C60003C045 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = Runner/Assets.xcassets; sourceTree = "<group>"; };
@@ -184,6 +186,7 @@
 				33CC10F02044A3C60003C045 /* AppDelegate.swift */,
 				33CC11122044BFA00003C045 /* MainFlutterWindow.swift */,
 				8A4B7C2D9E1F3A5B6C7D8E9F /* PhotoPickerPlugin.swift */,
+				8A4B7C2D9E1F3A5B6C7D8EB0 /* SystemNotificationPlugin.swift */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
 				33E51914231749380026EE4D /* Release.entitlements */,
 				33CC11242044D66E0003C045 /* Resources */,
