@@ -22,7 +22,7 @@ abstract final class AppConfig {
   static const String appNameEn = 'Yeahbear';
 
   /// 应用版本
-  static const String appVersion = '0.1.1';
+  static const String appVersion = '0.1.2';
 
   /// 通用 Logo 网络地址（登录页/关于页展示；留空则回退 assetLogo）
   static const String appLogoUrl = '';
