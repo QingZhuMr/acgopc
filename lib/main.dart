@@ -513,7 +513,8 @@ class _HomePageState extends State<HomePage> {
   static _HomePageState? current;
 
   // 当前选中的导航索引（0=消息，1=广场，2=个人中心）
-  int _currentIndex = 1;
+  // 默认登录后进「消息」页
+  int _currentIndex = 0;
 
   /// 消息页 GlobalKey（聊天离线通知点击跳转会话用）
   final GlobalKey<MessagePageState> _messagePageKey =
