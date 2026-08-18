@@ -2286,12 +2286,8 @@ class _ProfileViewState extends State<_ProfileView> {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      _MasonryGrid(
-                        posts: _browseHistory,
-                        columns: _favColumns(constraints.maxWidth),
-                        coverHeight: _favCoverHeight,
-                        onPostTap: (p) => _openHistoryPost(p),
-                      ),
+                      // 按访问日期分组：今天 / 昨天 / 更早（与 formatRelativeTime 自然日一致）
+                      ..._buildBrowseHistoryGroups(b, constraints),
                     ],
                   ],
                   const SizedBox(height: 16),
@@ -2514,6 +2510,75 @@ class _ProfileViewState extends State<_ProfileView> {
         _hisLoadFailed = true;
       });
     }
+  }
+
+  /// 浏览历史按访问日期分组（今天 / 昨天 / 更早）
+  ///
+  /// 分组判定与 `formatRelativeTime` 的自然日一致；组内保持服务端返回顺序
+  /// （按 browse_at 倒序，重复访问已在服务端去重置顶 → 以最新访问时间为准）。
+  List<({String label, List<Map<String, dynamic>> items})> _groupBrowseHistory() {
+    final n = DateTime.now();
+    final today = DateTime(n.year, n.month, n.day);
+    final groups = <String, List<Map<String, dynamic>>>{
+      '今天': [],
+      '昨天': [],
+      '更早': [],
+    };
+    for (final p in _browseHistory) {
+      final browseAt = (p['browse_at'] as num?)?.toInt() ?? 0;
+      if (browseAt <= 0) {
+        groups['更早']!.add(p); // 无时间归"更早"
+        continue;
+      }
+      final t = DateTime.fromMillisecondsSinceEpoch(browseAt * 1000);
+      final tDay = DateTime(t.year, t.month, t.day);
+      final dayDiff = today.difference(tDay).inDays;
+      if (dayDiff <= 0) {
+        groups['今天']!.add(p); // 今天（含未来/无时区偏差）
+      } else if (dayDiff == 1) {
+        groups['昨天']!.add(p); // 昨天
+      } else {
+        groups['更早']!.add(p); // 更早
+      }
+    }
+    // 只保留非空分组，顺序固定：今天 → 昨天 → 更早
+    return [
+      for (final label in ['今天', '昨天', '更早'])
+        if (groups[label]!.isNotEmpty)
+          (label: label, items: groups[label]!),
+    ];
+  }
+
+  /// 渲染浏览历史分组（每组：日期标题 + 瀑布流）
+  List<Widget> _buildBrowseHistoryGroups(
+      Brightness b, BoxConstraints constraints) {
+    final groups = _groupBrowseHistory();
+    final widgets = <Widget>[];
+    for (final g in groups) {
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 10),
+          child: Text(
+            g.label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: textMutedColor(b),
+            ),
+          ),
+        ),
+      );
+      widgets.add(
+        _MasonryGrid(
+          posts: g.items,
+          columns: _favColumns(constraints.maxWidth),
+          coverHeight: _favCoverHeight,
+          onPostTap: (p) => _openHistoryPost(p),
+        ),
+      );
+      widgets.add(const SizedBox(height: 12));
+    }
+    return widgets;
   }
 
   /// 清空浏览历史（弹确认框）
