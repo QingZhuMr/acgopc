@@ -127,4 +127,32 @@ class SecureStorage {
       }
     } catch (_) {}
   }
+
+  /// 用本机派生密钥加密本地敏感数据（AES-256-GCM）
+  ///
+  /// 返回格式 `g1:{iv}:{tag}:{cipher}`，供 ChatStore 加密私钥用。
+  /// 同一台机器可解密；换机器/换系统（机器标识改变）将无法解密，
+  /// 上层应降级处理（如重新生成密钥对）。
+  Future<String> encryptLocal(String plain) async {
+    final iv = enc.IV.fromSecureRandom(12);
+    final encrypter = enc.Encrypter(
+        enc.AES(_deriveKey(), mode: enc.AESMode.gcm, padding: null));
+    final encrypted = encrypter.encrypt(plain, iv: iv);
+    // encrypt 库 GCM 输出 = ciphertext + tag（16 字节），一并存储
+    return 'g1:${base64Encode(iv.bytes)}:${encrypted.base64}';
+  }
+
+  /// 解密 [encryptLocal] 加密的数据；格式不符或解密失败返回 null
+  Future<String?> decryptLocal(String payload) async {
+    try {
+      final parts = payload.split(':');
+      if (parts.length != 3 || parts[0] != 'g1') return null;
+      final iv = enc.IV(base64Decode(parts[1]));
+      final encrypter = enc.Encrypter(
+          enc.AES(_deriveKey(), mode: enc.AESMode.gcm, padding: null));
+      return encrypter.decrypt64(parts[2], iv: iv);
+    } catch (_) {
+      return null;
+    }
+  }
 }

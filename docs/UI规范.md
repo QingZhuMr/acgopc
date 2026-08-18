@@ -113,6 +113,8 @@ Row(
 - 自绘 `_MacRailItem`（图标 + 文字，左对齐，Finder 风格），顶部 Logo，中间为功能项，底部为通知 + 设置
 - **选中态**：图标与文字均 `primary` 蓝，文字**不加粗**（w400），指示器 `primarySoft` 浅蓝底
 - **未选中态**：图标与文字均 `text`（白天黑 `#111827` / 夜晚白 `#F5F5F7`），与内容页主文字一致
+- **角标**：`badge` 参数（红色 `kDanger` 胶囊，99+ 封顶，`Positioned` 于图标右上角）——「消息」显示**聊天未读总数**（监听 `ChatStore.chatUnreadTick`）；「通知」显示**通知中心未读数**（`NotificationCenter.instance.unread`，`kPrimary` 铃铛高亮）
+- **图标整体下移 1px**：导航项图标（含角标）用 `Transform.translate(Offset(0,1))` 视觉下移 1px（不参与布局，旁边文字位置不受影响）
 - 背景：实心 `bgSoft` 不透明（玻璃/半透明方案已于 2026-08-17 永久放弃，勿再引入 Acrylic/Mica）
 
 ---
@@ -315,13 +317,15 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
   - **头像位置**：本人（`isMine`）头像在**右侧**，他人头像在**左侧**；头像在右时爱心被挤压到气泡左侧
   - **气泡**：本人 = **蓝色底（`kPrimary`）+ 白色文字**；他人 = `bgSoftColor` 底 + 主题文字色；圆角矩形 + 小三角，小三角**对准头像**（头像左→三角朝左，头像右→三角朝右）
   - **气泡内容**：昵称 + 内容 + 图片 + 时间/定位 + **点赞按钮（与时间/定位同一行，包裹在气泡内）**
-  - **删除/举报**：**无删除按钮、无省略号**——统一通过**右键气泡**弹出菜单（本人=删除，他人=举报；`GestureDetector.onSecondaryTapDown` + `showMenu`）
+  - **删除/举报**：**无删除按钮、无省略号**——统一通过**右键气泡**弹出菜单（本人=删除，他人=举报；`BubbleMenu(triggerOnRightClick: true)`）
+  - **系统右键菜单**：气泡内容用 `SelectableText`（可拖动选择复制），但其**系统右键菜单已禁用**（`contextMenuBuilder` 返回空）——复制功能**合并进气泡菜单**（菜单首项「复制」），避免右键时系统复制菜单与气泡菜单**双弹窗**；文本仍可拖动选中后 Ctrl+C
   - **回复**：**点击气泡区域**发起评论/回复（无独立「回复」按钮）；评论点赞 `_CommentLikeButton` 在气泡内时间/定位右侧，本人（蓝底）爱心为白色
   - **折叠图片区**：`_buildBody` 用 `LayoutBuilder`+`Stack`+`AnimatedPositioned`，左侧图片轮播可收起/展开（折叠按钮位于分割线，动画 300ms，箭头 `AnimatedRotation` 0/0.5 圈）。右侧内容最大宽度 `maxPanelW=720` 居中，滚动条贴最右。
   - **图片区背景色**：白天模式用白天背景色（`bgColor`，白底），夜晚用暗色（`0xFF19191E`）；**放大的图片背景色不变**（保持深色 `0xFF000000` 遮罩）。
-- **纯文本帖子假封面**（`_TextCover`）：取正文前 30 字 + 中文双引号 `"…"`，溢出用 `...`，字号 18-20
+- **纯文本帖子假封面**（`_TextCover`）：确定性纯色背景（浅底深字，客户端本地生成）。**封面内始终显示**正文前 30 字 + 中文双引号 `"…"`（字号 18）；**卡片场景**封面内引文 + 封面下方正文区（≤2 行）**两者都显示**，与真图片卡片结构一致
 - **评论点赞对齐**（抖音式）：爱心图标统一 **16px**，用固定宽度容器（44px）左对齐——**点赞数字宽度不影响爱心位置**，同层级所有爱心图标中心在完全同一垂直列对齐
 - **点赞数格式化**：≥1000 用 `k`（如 `1k` / `1.2k` / `10k`），整数去小数、保留 1 位小数去末尾 0
+- **帖子级点赞/收藏乐观更新**（`_togglePostLike`/`_togglePostFavorite`）：点击后**先本地立即渲染**（切换高亮态 + 计数 ±1），**不等接口返回**；接口成功后用返回的最新 `is_liked/is_favorited/like_count/favorite_count` 校准；**失败回滚**（还原点击前状态与计数）+ `NotifyStack.warning` 提示「点赞/收藏失败，请稍后重试」
 
 > **新增页面/组件时**：颜色一律用 `app_theme.dart` 的函数/常量 → 文字用对应层级（text/textBody/textMuted...）→ 卡片 `elevation:0` + 8px 圆角 → 图标用 Material Icons → 主题用 `Theme.of(context).brightness` 分流 → **禁硬编码颜色** → 可滚动区域用 silky_scroll → 时间用 `formatRelativeTime`。
 
@@ -335,7 +339,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 
 ## 10.2 消息页（好友列表 + 聊天）
 
-- **入口**：左侧导航「广场」上方「消息」项（图标 `Icons.mode_comment_rounded` 圆润聊天气泡），页面内嵌于左侧导航栏（不 push、无返回按钮）。
+- **入口**：左侧导航「广场」上方「消息」项（图标 `Icons.mode_comment_rounded` 圆润聊天气泡），页面内嵌于左侧导航栏（不 push、无返回按钮）。**导航项右上角红色数字角标 = 所有会话未读总数**（`ChatStore.totalUnread()` 汇总，99+ 封顶；收到新消息 / 打开会话清零 / 跨端已读同步 / 删除会话时实时刷新，切换账号后显示新账号未读）。
 - **背景与顶栏**：**顶栏**背景 = `bgSoftColor`（与左侧导航栏一致，`_TitleBar` 传 `color: bgSoftColor(b)`）；**好友列表**（左 260px）背景 = `bgSoftColor`（比聊天区**深**）；**聊天内容页**（右）背景 = **主背景 `bgColor`**（标题栏/输入区同用主背景色）；**macOS 无顶栏**（消息页顶到窗口顶）。
 - **布局**：左右分栏——左侧好友列表（宽 260px，**无分割线**）；右侧聊天区。
 - **好友列表**：标题「好友」（16px/w600）；好友项 = 头像（40px 圆形）+ 昵称（14px/w500）；选中项 `primarySoftColor` 底；空态「还没有好友 / 互相关注后即可成为好友」+ `Icons.chat_bubble_rounded` 圆润气泡图标；分页加载（page_size=50，触底加载更多）。**好友 = 互相关注**（`/api/user/friends`）。
@@ -345,8 +349,44 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - **聊天区**（第二期已实现）：未选中好友时右侧为 `Icons.chat_bubble_rounded` 64px 圆润气泡占位（颜色 `textFaintColor`——白天很浅/晚上很深，**无文字**）；选中好友后：
   - 聊天对象标题栏（头像 32px + 昵称 15px/w600，无分割线；对方未开启聊天时右侧提示"对方暂未开启聊天"）
   - 消息区：气泡列表（自己 `kPrimary` 蓝底白字靠右、对方 `bgHoverColor` 底靠左带 32px 头像）；时间 + 发送状态（发送中 `schedule` 图标、失败 `error_outline` 红色）；空态"和好友打个招呼吧"
-  - 输入区：输入框（`bgHoverColor` 圆角）+ 圆角发送按钮（`kPrimary` 白纸飞机图标）
-  - **E2EE**：消息全程加密（RSA-OAEP + AES-GCM），本地 SQLite 存明文供离线浏览；聊天密钥首次进入自动生成并上传公钥
+  - **输入区（微信/QQ 式）**：
+    - **输入框行**：多行 TextField 占满整行（左侧无按钮留白），视觉高度 **4 行**（固定高度，实际满 4 行后**内部滚动**）；右侧留白 40px 避免被右上角按钮遮挡；**Enter 发送、Ctrl/Cmd+Enter 换行**（中文输入法候选确认时 Enter 交给输入法）
+    - **背景**：输入框背景 = **左侧导航栏背景色**（`bgSoftColor`）；好友/会话列表背景 = **原输入框背景色**（`bgHoverColor`），两层视觉互换（列表更亮、输入框更沉）
+  - **在线状态（QQ 逻辑）**：在线/离线圆点**叠加在头像右下角**、覆盖头像一部分（`_avatarWithStatus`：Stack + Positioned，绿 `kSuccess`=在线 / 灰 `textFaintColor`=离线，圆点带 1.5px `bgColor` 描边"切"进头像）——应用于**聊天标题栏头像**（32px，原昵称旁独立圆点移除）、**会话列表项**（40px，online 从好友列表实时取）、**好友列表项**（40px）
+    - **右上角**（叠加在输入框顶层 `Stack`，`_InputResizeButton`）：**默认显示贴合右上角弧边的弧线符号**（`_CornerArcPainter` 两条短边 + 90° 圆弧，弧度与输入框圆角视觉一致，半透明弱化不抢焦点）；**鼠标悬停切换成放大/缩小图标**（`open_in_full` ↔ `close_fullscreen`，主色高亮），点击切换输入框高度 4 行 ↔ 10 行
+    - **输入框下侧工具栏行**：**左侧**表情按钮（`Icons.emoji_emotions_outlined`，面板打开时高亮 `kPrimary`，点击向上弹 BubbleMenu 表情气泡）+ 图片按钮（`Icons.image_rounded`）；**右侧**发送按钮（`kPrimary` 圆角胶囊，纸飞机图标 + "发送" 文字）
+    - **表情气泡交互**：点 **emoji** 插入字符或点**表情包**发送后，气泡**自动收起**（微信式，下次点表情按钮再弹出）；面板顶栏 tab 为**表情图标**（`emoji_emotions_outlined`）+ **爱心图标**（`favorite_outline`），选中主色高亮
+    - 引用条显示在输入框上方（同前）
+  - **表情消息**：点表情按钮 → **`BubbleMenu` 气泡弹出 `StickerPanel`**（宽度 360、高度 236，向上弹出，箭头对齐按钮），emoji 列表 + 表情包 grid 均为 silky 滚动：
+    - 点 emoji → 光标处插入 Unicode 字符（随文本一起发送）
+    - 点表情包 → **直接发送表情消息**（`msg_type=3`，按原图宽高比缩放、最长边 120px；**无气泡包裹/圆角**，透明底直接透出表情图片，gif 支持动效）
+    - **表情消息不可点击放大**（去掉了全屏预览）；右键菜单含「添加到表情」——收藏该表情到自己的表情包（走 `/api/sticker/add` 软引用，图片文件不复制）；**自己发的表情消息（自己的表情包）不显示「添加到表情」**
+    - 会话摘要显示「[表情]」
+  - **表情面板**（`StickerPanel`）：emoji 网格间距紧凑（`mainAxisSpacing/crossAxisSpacing: 0`）；**表情包网格间距加大**（`mainAxisSpacing/crossAxisSpacing: 8`，微信式呼吸感）；**云端表情包图片 404/文件已删 → 自动删除数据库记录**（仅自己上传的能删）**或本地屏蔽**（非本人上传的失效表情从列表过滤 + 本会话黑名单，重启后重新检测）
+  - **账号隔离**：表情包列表仅显示**当前账号自己**的（上传的 + 收藏的）——后端 `sticker/list` 按 uid 过滤 + 缓存按 uid 维度；切换账号后表情包列表随账号切换，不会串号显示别人的表情
+  - **拉黑后不可见（前后端）**：被拉黑者访问拉黑者主页 → 顶部按钮变「已被拉黑」禁用、动态/收藏 tab 显示"你们之间存在拉黑关系，无法查看 TA 的内容"占位（后端 `blocked=1`）；广场与帖子详情由后端过滤（拉黑双方的帖子互不可见）；无法关注、无法聊天
+  - **前端缓存账号隔离**：聊天本地 SQLite（`acgo_chat_<uid>.db`）、**聊天图片缓存**（`chat_images/<uid>/`）、**发帖草稿**（`draft/<uid>/`）均按账号隔离——切换账号后各账号数据完全独立，互不可见/不覆盖；老版本无 uid 子目录的旧文件仍可读（历史路径存绝对路径），新缓存进账号目录
+  - **引用（回复）**：气泡右键菜单新增「回复」；点击后输入区上方出现引用条（`format_quote` 图标 + 「回复 昵称」w600 主色 + 单行预览，右侧 X 取消）；发送时消息体打包 `{"text","reply_to":{id,nickname,msg_type,preview}}`（E2EE 密文内自包含，对端直接渲染）；气泡内引用块 = 左侧 3px 强调竖条 + 昵称（`kPrimary`）+ 单行预览（超出省略），点击引用块定位跳转到被引用消息（`Scrollable.ensureVisible`，不在当前加载范围时提示）；被引用内容为图片/表情/撤回时预览分别显示 `[图片]`/`[表情]`/「该消息已撤回」
+  - **多选删除**：气泡右键菜单新增「多选」；进入多选模式后：
+    - 每条消息左侧显示圆形复选框（选中 = `kPrimary` 填充 + 白勾，150ms 动画）
+    - 点击气泡勾选/取消（图片/表情点击不弹预览，发送失败重发点击不触发）
+    - 输入区被多选工具栏替换：「已选 N 项」+ 全选/取消全选 + 删除（危险红，未选中禁用）+ 取消
+    - 删除走 `AppDialog.confirm` 确认（danger 红键）→ **仅本设备删除**（服务器消息不受影响，其他设备仍可见）；删除后拉历史/断线同步按 msg_id 过滤已删消息，不会"复活"；被引用的消息若被删则自动取消引用
+  - **离线消息通知**：收到对方新消息且**当前没在查看该会话**（消息页切走 / 看着其他会话 / 窗口遮挡或托盘）时，弹**应用内通知**（NotifyStack：昵称 + 内容摘要）+ **Windows 系统通知**（Toast：标题昵称 + 正文摘要），**点击跳转到对应会话**（切消息 tab + 打开会话）。离线期间断线 sync 拉取的消息同样通知（统一在解密入库时触发）；同一消息去重（只通知一次）；自己其他设备发出的消息不通知；会话昵称取本地会话缓存（找不到用「新消息」兜底）；图片/表情/引用消息摘要为 `[图片]`/`[表情]`/实际文本
+  - **已读状态跨端同步**：在本设备读消息 → 服务器除推 `chat_read` 给发送方外，还推 `chat_read_sync` 给自己其他在线设备 → 其他设备**清零该会话未读角标**（多端已读一致，A 端读了 B 端不再显示红点）
+  - **气泡连续（微信风格）**：同一发送者、相邻消息均**纯文本**（msg_type=1、未撤回、无引用块）、时间差 <5 分钟且同一天 → **合并成连续气泡**：组内成员之间不显示头像（**头像只在组头（最旧）那条显示**，自己消息右侧、对方消息左侧）、气泡圆角朝组内一侧变小贴合、垂直间距收紧到 1px；发送状态（已读/未读/失败）只在组尾显示
+  - **头像磁盘缓存**：新增 `widgets/cached_avatar.dart`（`CachedAvatar`）——头像缓存到 `<dataDir>/avatar_cache/<url哈希>`，**好友不换头像时不重复网络加载**（磁盘命中 → `Image.file`，内存 ImageCache 二次加速）；换头像（url 变）→ 哈希变 → 自动重新下载；缓存超 7 天自动清理；`message_page`（`_avatarWithStatus`/`_peerAvatar`/`_myAvatar`）、`main.dart`（`_UserAvatar`）、`post_detail_page`（`_AvatarBox`）均已接入
+- **图片磁盘缓存**：`NetImage` 升级支持磁盘缓存（`services/image_cache.dart`）——帖子/评论图片首次加载后缓存到 `<dataDir>/image_cache/<uid>/`（**按用户隔离**），再次打开直接命中不再网络加载；**所有缓存一律用户隔离**（头像、聊天图片、帖子图片均按账号分目录），7 天自动清理；设置页「清除缓存」一键清理（含占用大小显示）
+- **聊天搜索框**：背景用**主背景色 `bgColor`**（非蓝色），图标/文字/光标/清除按钮跟随主题（会话+好友搜索统一）
+- **好友备注**：弹出层昵称旁**编辑按钮**（`edit_outlined`）→ 输入框设置备注（≤50 字，可空清除）；**好友列表与会话列表优先显示备注名**（微信风格）；后端存于「我关注对方」的关系上，仅自己可见
+- **动态卡片动态高度（小红书样式）**：封面高度**按图片真实宽高比动态计算**（客户端读图自身尺寸，不依赖后端字段）：首次渲染用确定性伪随机占位高度 [200,320] 制造错落（`_coverHeightFor`），图片解码完成后 `_CoverImage` 用 `NetImage.onLoaded` 回调的真实宽高重算 `宽×高/宽`（**图片本身最多 9:16**——高 > 宽×16/9 封顶裁剪、9:16 竖图/方图/横图按真实比例显示，**最小高度 180** 防细条）；`_CoverImage` 用 `BoxFit.cover` 铺满裁剪（顶部圆角独立裁剪）；**无图帖子卡片结构与真图片卡片一致**：封面内显示内容引文 + 封面下方正文 ≤2 行 + 底部头像昵称+赞数
+- **图片上传客户端统一转码 JPEG**（`utils/image_transcoder.dart` `ImageTranscoder.toJpeg`）：**头像/帖子/评论/聊天**图片选择后**客户端解码重编码为 JPEG**（`image` 包，质量 88），支持 webp/png/bmp/jpg 等任意格式；**GIF 动图保留原样**（转 jpg 会丢动画）；**头像禁止 GIF**（选图时 `isGif` 拦截提示「头像暂不支持GIF动图」，未来可作会员特权）；上传文件名统一 `.jpg`；**表情包不走此转码**（`StickerCompressor` 保留 PNG/GIF 动图与透明）
+- **聊天输入框粘贴图片**（message_page）：**Ctrl/Cmd+V** 检测剪贴板图片（`ImageTranscoder.readClipboardImage` 用 **win32 直读系统剪贴板 CF_DIBV5/CF_DIB**，构造 BMP 交给 image 包解码，浏览器/截图工具复制的图片系统统一转成 DIB）→ 转 jpg → 直接发送图片消息（GIF 保留动画）；无图片时回落到文本粘贴；右键菜单「粘贴」同逻辑
+- **剪贴板读取方案（跨平台）**：**Windows** 用 `dart:ffi` 直连 user32/kernel32（函数内 try/catch 懒加载，`OpenClipboard`/`IsClipboardFormatAvailable(CF_DIBV5=17 优先, 回退 CF_DIB=8)`/`GetClipboardData`/`GlobalLock`+`GlobalSize` 读 DIB 字节，拼 14 字节 BMP 文件头成完整 BMP 给 image 包解码）；**macOS** 走原生 MethodChannel「com.acgo/photopicker」新增 `readImage` 方法（`PhotoPickerPlugin.swift` `NSPasteboard` 读 PNG 优先回退 TIFF，NSImage 统一转 PNG 返回 `FlutterStandardTypedData`）；其他平台返回 null。**不用 super_clipboard**（底层 super_native_extensions 需 Rust/cargokit 编译，无 cargo 构建必失败）；**不 import `win32` 包**（其顶层 `DynamicLibrary.open('user32.dll')` 在 macOS 上 import 即崩）
+  - **图片另存为**：图片消息（msg_type=2）**放大预览底部工具栏有「另存为」**（半透明黑底胶囊按钮，**弹系统保存对话框由用户选择保存位置/文件名**，`FilePicker.saveFile`；优先拷贝本地缓存文件，无缓存走网络）；气泡右键菜单也有「另存为」（`save_alt_rounded`，同逻辑）；**表情消息不支持另存为**；用户取消保存不提示
+  - **图片大图预览增强**（`_previewImage`）：**左上角显示序号**（当前/共 N 张）；**左右切换**当前聊天记录里所有图片消息（`_messages` 过滤 msg_type==2，`StatefulBuilder` 维护索引，首/尾点击提示「没有图片了」）；**底部工具栏**：「另存为」+「定位到聊天记录」（关闭预览后 `_jumpToMessage(msg_id)` 滚动到该消息，`msg_id` 无效时禁用）
+  - **标题栏右上角省略号 → 右侧弹出层**（`_showChatMenu`，从右滑入、右对齐、左侧圆角、宽 300，微信风格）：顶部头像+昵称+在线+关闭，菜单项——「进入他的主页」（内容区覆盖打开）、「清空对话记录」（`AppDialog.confirm` 交互提示，清本地+服务器缓存+WS 多端同步）、「查找聊天记录」（切回会话视图聚焦搜索框）、「取消好友」（confirm 提示 → 后端 `removeFriend` 解除双方关注 → 本地移除好友+隐藏会话）、「拉黑名单」（confirm 提示拉黑后果 → 后端 `block` 自动解除双方关注 → 本地移除好友+隐藏会话，`kDanger` 红字）
+  - **E2EE**：消息全程加密（RSA-OAEP + AES-GCM），本地 SQLite 存明文供离线浏览；聊天密钥首次进入自动生成并上传公钥；引用/表情元数据同样在密文内传递
 
 ## 10.3 他人个人中心页
 
@@ -365,10 +405,17 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 
 ## 10.1 气泡菜单（省略号弹层）规范
 
-- 所有「省略号」弹层（帖子详情删除/举报、个人中心更多操作等）统一用 `widgets/bubble_menu.dart` 的 `BubbleMenu`，**不再用 `PopupMenuButton`**
+- 所有**弹出层**（省略号弹层 + **全局右键菜单** + **扩展面板**）统一用 `widgets/bubble_menu.dart` 的 `BubbleMenu`：帖子详情删除/举报（右键气泡）、个人中心更多操作（省略号）、我的动态/收藏/历史卡片右键、消息页会话/气泡右键、**聊天表情面板**（`content` 参数传入 `StickerPanel`，配 `width`/`panelHeight` 限制尺寸）。**不再用 `PopupMenuButton` / `showMenu` / `GestureDetector.onSecondaryTapDown` 自弹菜单**
+- `BubbleMenu` 的 `content` 参数：非空时气泡内渲染自定义面板替代菜单项（`panelHeight` 定高），用于非菜单的扩展面板（表情等）；`onOpenChange` 回调可联动触发按钮高亮
+- `BubbleMenuState` 公开 `close()`：点击面板内容（emoji/表情包）后由外部调用**自动收起气泡**（微信式）；触发按钮配 `GlobalKey<BubbleMenuState>` 绑定
+- **帖子详情页 emoji 面板**：表情按钮同样走 `BubbleMenu` 气泡（`content: EmojiPanel(transparent: true)`，宽 340 高 209，仅 emoji 无表情包），点击 emoji 插入后自动收起；移除旧 inline `AnimatedSize` 面板
 - **样式**：圆角矩形气泡（`kRadiusBtn`）+ **框外**小三角箭头（三角完全在矩形外、底边与矩形边缘相接，不侵入框内），带 1px 边框（白天浅灰 / 夜晚深灰，取 `bgHoverColor`）、**无阴影、无分割线**，主题明暗自适应（白天白底 / 夜晚深色底，取 `bgColor`）
 - **文字不加粗**（`FontWeight.w400`）、**无下划线**（`decoration:none`）
 - **菜单项反馈**：**仅鼠标悬停**时整行显示**蓝色胶囊**（`kPrimary` 圆角底），图标与文字变**白色**；其余状态用项自身颜色（默认白天黑 / 夜晚白 `textColor`；删除项 `kDanger`）
+- **宽度**：`width` 参数不传时**按最长菜单项文字自动计算**（文字完整显示不截断，`TextPainter` 测量 + clamp 84~240）；传入数值则固定宽度（省略号菜单等场景）
+- **合并系统菜单**：气泡内 `SelectableText`/`TextField` 的系统右键菜单（复制/粘贴）在全局右键统一后**一律禁用**（`contextMenuBuilder` 返回空），对应功能（如「复制」）合入 `BubbleMenu` 菜单项，避免右键**双弹窗**
+- **输入框右键统一气泡**（`widgets/text_input_menu.dart` `TextInputBubbleMenu`）：**所有输入框**（搜索/昵称/密码/发帖/评论/聊天/备注/举报等 16 处）右键一律外包 `TextInputBubbleMenu`（`BubbleMenu(triggerOnRightClick:true)`），菜单含**剪切/复制/粘贴/全选**；密码框（`obscure:true`）隐藏剪切/复制（与系统一致）；聊天输入框传 `onPasteImage`——粘贴时优先读剪贴板图片（有图转 jpg 发送，无图落文本粘贴）；输入框自身 `contextMenuBuilder` 一律返回空禁用系统菜单
+- **内容对齐**：**所有菜单项内容宽度一致 → 内容居中显示**；**宽窄不一 → 左对齐**（图标+文字整体对齐，微信/QQ 右键菜单风格）。判断用 `TextPainter` 测量每项（图标 15 + 间距 6 + 文字宽）是否全部相等
 - **方向**：默认向下弹出；下方空间不足自动向上
 - **三角对齐**：小三角水平中心对齐触发的图标/文本中心
 - **单例**：全局同一时刻最多只显示一个气泡（`BubbleMenuManager`），打开新气泡自动关闭旧的
@@ -390,16 +437,16 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
   - **刷新时机**：按需拉取（非定时轮询/非 WS 推送）——首次进入个人中心加载；之后**每次从其他 tab 切回个人中心**（`active` 由 false→true）自动刷新，保证「广场里收藏/取消收藏」后切回来是最新数据。收藏列表是当前用户私有数据、低频变更、单设备在线，无需轮询/推送开销
 - **关注/粉丝入口**（信息卡下方、熊爪数**左侧**）：`关注 +N`、`粉丝 +N` 两项（`_CountEntry`：数字 14px/w700 + 标签 13px `textMutedColor`，hover 圆角）。计数来自 `followCounts`（切回个人中心时刷新）。
 - **关系列表二级页**（`pages/relation_list_page.dart`，Navigator.push 打开）：标题栏二级页面规范（高48/返回按钮/15px标题「我的关注」）；**三个 tab**：互相关注/关注/粉丝（胶囊切换 `primarySoft` 选中），**默认 tab 由入口决定**（点关注→关注，点粉丝→粉丝，好友入口→互相关注）。列表项 = 头像 40px + 昵称 14px/w500 + 「互相关注」小徽标 + 关注/已关注胶囊按钮（同他人主页三态样式）；点击用户打开他人主页（内容区覆盖）。
-- **我的动态**（「动态」tab）：**鼠标右键**动态卡片弹出上下文菜单（`showMenu`，同收藏/历史右键样式）→「删除动态」（`kDanger`）→ 确认框 → `deletePost` → 成功后从列表移除 + 提示「动态已删除」
+- **我的动态**（「动态」tab）：**鼠标右键**动态卡片弹出上下文菜单（`BubbleMenu`）→「删除动态」（`kDanger`）→ 确认框 → `deletePost` → 成功后从列表移除 + 提示「动态已删除」
 - **浏览历史**（「历史」tab，个人中心最右侧）：**服务端跨设备同步**（`user.browse_history` JSON 字段，**最多 120 条**，按浏览时间倒序）：
   - 数据源：`GET /api/user/browseHistory`（全量一次拉取，无分页）；记录：打开帖子详情时 `POST post_id`（静默上报，去重置顶限 120）
   - 布局：复用瀑布流 `_MasonryGrid`/`_PostCard`，同动态/收藏列数与封面高度算法
   - **按访问日期分组**：「今天 / 昨天 / 更早」三组（自然日判定与 `formatRelativeTime` 一致），每组标题 13px/w600 `textMutedColor` + 瀑布流；**重复访问以最新访问时间为准**（服务端去重置顶）
   - 状态：加载中骨架屏（`_SkeletonGrid`）、失败重试（`_FavRetry`）、空态（`_EmptyFavorites`，图标 `history_rounded` +「还没有浏览历史」）
   - **清空按钮**：历史列表非空时右上角「清空历史」文字按钮（`kDanger`），点击弹确认框 → `POST clear=1` 服务端清空 → 本地列表清空
-  - 交互：点击卡片进帖子详情（内容区覆盖）；从详情返回后自动刷新浏览历史（新的浏览置顶）；**鼠标右键卡片**弹上下文菜单（`showMenu`，鼠标位置弹出）：
+  - 交互：点击卡片进帖子详情（内容区覆盖）；从详情返回后自动刷新浏览历史（新的浏览置顶）；**鼠标右键卡片**弹上下文菜单（`BubbleMenu`，锚定卡片右键位置）：
     - 收藏卡片右键 →「取消收藏」（走 `togglePostFavorite`，成功后从列表移除 + 提示）
     - 历史卡片右键 →「删除该记录」（走 `deleteBrowseHistory`，服务端+本地移除 + 提示）
-  - 右键菜单样式：`showMenu`（`bgColor` 底、`kRadiusMd` 圆角）、菜单项 36 高 + 16px 图标 + 13px 文字；删除项用 `kDanger`
+  - 右键菜单样式：`BubbleMenu`（见 10.1 气泡菜单规范；内容对齐自动判断）
   - **刷新时机**：切到「历史」tab 首次加载；从其他 tab 切回个人中心时若历史 tab 未加载过则加载；清空/详情返回后即时刷新
 - **导航**：个人中心（`_currentIndex=1`）仍在左侧导航栏，页面标题「个人中心」

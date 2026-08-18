@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
 import '../core/app_theme.dart';
+import '../utils/text_sanitize.dart';
 import 'notify.dart';
+import 'text_input_menu.dart';
 
 /// 举报弹窗：选择原因 + 可选补充说明，提交后调用服务端举报接口
 ///
@@ -99,20 +101,27 @@ class _ReportDialogState extends State<ReportDialog> {
               ],
             ),
             const SizedBox(height: 12),
-            TextField(
+            TextInputBubbleMenu(
               controller: _contentCtrl,
-              maxLength: 500,
-              maxLines: 3,
-              style: TextStyle(fontSize: 13, color: textColor(b)),
-              decoration: InputDecoration(
-                hintText: '补充说明（选填）',
-                hintStyle: TextStyle(fontSize: 13, color: textFaintColor(b)),
-                isDense: true,
-                filled: true,
-                fillColor: bgHoverColor(b),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(kRadiusMd),
-                  borderSide: BorderSide.none,
+              child: TextField(
+                controller: _contentCtrl,
+                maxLength: 500,
+                maxLines: 3,
+                // 禁用系统右键菜单（统一用气泡方案）
+                contextMenuBuilder: (_, __) => const SizedBox.shrink(),
+                // 过滤粘贴/输入的非法 UTF-16 代理项（防渲染崩溃）
+                inputFormatters: const [Utf16SanitizeTextInputFormatter()],
+                style: TextStyle(fontSize: 13, color: textColor(b)),
+                decoration: InputDecoration(
+                  hintText: '补充说明（选填）',
+                  hintStyle: TextStyle(fontSize: 13, color: textFaintColor(b)),
+                  isDense: true,
+                  filled: true,
+                  fillColor: bgHoverColor(b),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(kRadiusMd),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
             ),

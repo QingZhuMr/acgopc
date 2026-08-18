@@ -15,16 +15,26 @@ class PostDraft {
   bool get isEmpty => content.trim().isEmpty && imageNames.isEmpty;
 }
 
-/// 发动态草稿本地存储（config 目录下 draft 子目录）
+/// 发动态草稿本地存储（config 目录下 draft/<uid> 子目录）
 ///
 /// 草稿在「暂存」时写入、发布成功后清除；退出登录不清除（属用户内容草稿）。
+/// **按账号隔离**：登录后 `openForUser(uid)` 设置账号目录，不同账号草稿互不可见。
 /// 图片以文件形式存磁盘，meta.json 记录内容与图片文件名。
 class PostDraftStore {
   PostDraftStore._();
 
   static final PostDraftStore instance = PostDraftStore._();
 
-  String get _dir => '${AppConfig.configDir}${Platform.pathSeparator}draft';
+  /// 当前账号 id（0=未登录，用公共子目录兜底）
+  int _uid = 0;
+
+  /// 登录/切换账号时调用：草稿目录切换到该账号（`draft/<uid>/`）
+  void openForUser(int uid) {
+    _uid = uid > 0 ? uid : 0;
+  }
+
+  String get _dir =>
+      '${AppConfig.configDir}${Platform.pathSeparator}draft${Platform.pathSeparator}$_uid';
   File get _metaFile => File('$_dir${Platform.pathSeparator}meta.json');
 
   Directory _ensureDir() {

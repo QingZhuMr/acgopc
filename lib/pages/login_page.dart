@@ -11,6 +11,7 @@ import '../core/device_service.dart';
 import 'maintenance.dart';
 import 'register_page.dart';
 import '../services/secure_storage.dart';
+import '../widgets/text_input_menu.dart';
 
 /// 登录成功回调（携带用户信息）
 typedef LoginSuccess = void Function(Map<String, dynamic> user);
@@ -216,74 +217,95 @@ class _LoginPageState extends State<LoginPage> {
                             const SizedBox(height: 32),
 
                             // 账号输入（手机号或 UID）
-                            TextFormField(
+                            TextInputBubbleMenu(
                               controller: _usernameCtrl,
-                              style: TextStyle(color: textCol),
-                              decoration: InputDecoration(
-                                labelText: '手机号 / UID',
-                                labelStyle: TextStyle(color: mutedCol),
-                                filled: true,
-                                fillColor: fieldBg,
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(kRadiusMd),
-                                  borderSide: BorderSide(
-                                      color: textFaintColor(b).withValues(alpha: .3)),
+                              child: TextFormField(
+                                controller: _usernameCtrl,
+                                // 禁用系统右键菜单（统一用气泡方案）
+                                contextMenuBuilder: (_, __) =>
+                                    const SizedBox.shrink(),
+                                style: TextStyle(color: textCol),
+                                decoration: InputDecoration(
+                                  labelText: '手机号 / UID',
+                                  labelStyle: TextStyle(color: mutedCol),
+                                  filled: true,
+                                  fillColor: fieldBg,
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(kRadiusMd),
+                                    borderSide: BorderSide(
+                                        color: textFaintColor(b)
+                                            .withValues(alpha: .3)),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(kRadiusMd),
+                                    borderSide: const BorderSide(
+                                        color: kPrimary, width: 1.5),
+                                  ),
                                 ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(kRadiusMd),
-                                  borderSide: const BorderSide(
-                                      color: kPrimary, width: 1.5),
-                                ),
+                                validator: (v) =>
+                                    (v == null || v.trim().isEmpty)
+                                        ? '请输入手机号或 UID'
+                                        : null,
                               ),
-                              validator: (v) => (v == null || v.trim().isEmpty)
-                                  ? '请输入手机号或 UID'
-                                  : null,
                             ),
                             const SizedBox(height: 16),
 
                             // 密码输入
-                            TextFormField(
+                            TextInputBubbleMenu(
                               controller: _passwordCtrl,
-                              obscureText: _obscure,
-                              // 仅允许英文/数字/英文标点（行业通用密码字符集，禁止中文、空格、emoji）
-                              inputFormatters: [
-                                FilteringTextInputFormatter.allow(
-                                    RegExp(r'[\x21-\x7E]')),
-                              ],
-                              style: TextStyle(color: textCol),
-                              decoration: InputDecoration(
-                                labelText: '密码',
-                                labelStyle: TextStyle(color: mutedCol),
-                                // ExcludeFocus：Tab 键跳过「显示密码」按钮
-                                suffixIcon: ExcludeFocus(
-                                  child: IconButton(
-                                    icon: Icon(
-                                      _obscure
-                                          ? Icons.visibility_off_outlined
-                                          : Icons.visibility_outlined,
-                                      color: mutedCol,
-                                      size: 20,
+                              obscure: true,
+                              child: TextFormField(
+                                controller: _passwordCtrl,
+                                obscureText: _obscure,
+                                // 禁用系统右键菜单（统一用气泡方案）
+                                contextMenuBuilder: (_, __) =>
+                                    const SizedBox.shrink(),
+                                // 仅允许英文/数字/英文标点（行业通用密码字符集，禁止中文、空格、emoji）
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                      RegExp(r'[\x21-\x7E]')),
+                                ],
+                                style: TextStyle(color: textCol),
+                                decoration: InputDecoration(
+                                  labelText: '密码',
+                                  labelStyle: TextStyle(color: mutedCol),
+                                  // ExcludeFocus：Tab 键跳过「显示密码」按钮
+                                  suffixIcon: ExcludeFocus(
+                                    child: IconButton(
+                                      icon: Icon(
+                                        _obscure
+                                            ? Icons.visibility_off_outlined
+                                            : Icons.visibility_outlined,
+                                        color: mutedCol,
+                                        size: 20,
+                                      ),
+                                      onPressed: () =>
+                                          setState(() => _obscure = !_obscure),
                                     ),
-                                    onPressed: () =>
-                                        setState(() => _obscure = !_obscure),
+                                  ),
+                                  filled: true,
+                                  fillColor: fieldBg,
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(kRadiusMd),
+                                    borderSide: BorderSide(
+                                        color: textFaintColor(b)
+                                            .withValues(alpha: .3)),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(kRadiusMd),
+                                    borderSide: const BorderSide(
+                                        color: kPrimary, width: 1.5),
                                   ),
                                 ),
-                                filled: true,
-                                fillColor: fieldBg,
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(kRadiusMd),
-                                  borderSide: BorderSide(
-                                      color: textFaintColor(b).withValues(alpha: .3)),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(kRadiusMd),
-                                  borderSide: const BorderSide(
-                                      color: kPrimary, width: 1.5),
-                                ),
+                                onFieldSubmitted: (_) => _login(),
+                                validator: (v) => (v == null || v.isEmpty)
+                                    ? '请输入密码'
+                                    : null,
                               ),
-                              onFieldSubmitted: (_) => _login(),
-                              validator: (v) =>
-                                  (v == null || v.isEmpty) ? '请输入密码' : null,
                             ),
 
                             // 错误提示

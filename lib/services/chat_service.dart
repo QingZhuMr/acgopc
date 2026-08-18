@@ -2,7 +2,10 @@ import 'dart:async';
 
 import '../core/api_client.dart';
 import 'chat_crypto.dart';
+import 'chat_image_cache.dart';
+import 'chat_notifier.dart';
 import 'chat_store.dart';
+import '../utils/text_sanitize.dart';
 
 /// 聊天服务：密钥管理 + 消息收发（E2EE 加解密 + 本地存储）
 class ChatService {
@@ -11,6 +14,10 @@ class ChatService {
 
   /// 当前用户 ID
   int _userId = 0;
+
+  /// 服务器时间与本地时间偏移（秒），供撤回等时效判断使用：
+  /// serverNow ≈ DateTime.now().millisecondsSinceEpoch ~/ 1000 + offset
+  static int serverTimeOffsetSec = 0;
 
   /// 是否已初始化（密钥已就绪）
   bool _ready = false;
@@ -82,9 +89,13 @@ class ChatService {
   Future<({int msgId, bool ok, String error})> sendMessage({
     required int receiverId,
     required String plaintext,
+    int msgType = 1,
+    String imageLocalPath = '',
     String? peerPublicKey,
     String? forceClientMsgId,
   }) async {
+    // 发送前清洗非法 UTF-16 代理项（防止坏文本入库/加密/对端渲染崩溃）
+    plaintext = sanitizeUtf16(plaintext);
     final clientMsgId = forceClientMsgId ?? _genClientMsgId();
     final chatId = _chatId(_userId, receiverId);
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
@@ -113,13 +124,14 @@ class ChatService {
         clientMsgId: clientMsgId,
         senderId: _userId,
         receiverId: receiverId,
-        msgType: 1,
+        msgType: msgType,
         plaintext: plaintext,
         ciphertext: '',
         nonce: '',
         ephemeralPub: '',
         sendStatus: 2,
         createTime: now,
+        imageLocalPath: imageLocalPath,
       );
       _scheduleRetry();
       return (msgId: 0, ok: false, error: '发送失败，正在重试');
@@ -137,13 +149,14 @@ class ChatService {
         clientMsgId: clientMsgId,
         senderId: _userId,
         receiverId: receiverId,
-        msgType: 1,
+        msgType: msgType,
         plaintext: plaintext,
         ciphertext: '',
         nonce: '',
         ephemeralPub: '',
         sendStatus: 2,
         createTime: now,
+        imageLocalPath: imageLocalPath,
       );
       _scheduleRetry();
       return (msgId: 0, ok: false, error: '发送失败，正在重试');
@@ -156,13 +169,26 @@ class ChatService {
       clientMsgId: clientMsgId,
       senderId: _userId,
       receiverId: receiverId,
-      msgType: 1,
+      msgType: msgType,
       plaintext: plaintext,
       ciphertext: encrypted.body,
       nonce: encrypted.nonce,
       ephemeralPub: encrypted.encKey,
       sendStatus: 0,
       createTime: now,
+      imageLocalPath: imageLocalPath,
+    );
+
+    // 发送即驱动会话（微信原理：我发出的消息也会让会话出现并上浮）
+    await ChatStore.instance.upsertConversation(
+      chatId: chatId,
+      peerId: receiverId,
+      peerNickname: '',
+      peerAvatar: '',
+      lastMsgText:
+          ChatStore.conversationPreview({'msg_type': msgType, 'plaintext': plaintext}),
+      lastMsgTime: now,
+      unreadDelta: 0,
     );
 
     // 调接口（10s 超时）
@@ -170,6 +196,7 @@ class ChatService {
       final resp = await ApiClient.instance
           .sendChatMessage(
             receiverId: receiverId,
+            msgType: msgType,
             body: encrypted.body,
             nonce: encrypted.nonce,
             ephemeralPub: encrypted.encKey,
@@ -185,8 +212,20 @@ class ChatService {
       }
       final data = (json['data'] ?? {}) as Map;
       final msgId = (data['id'] as num?)?.toInt() ?? 0;
+      // 写回服务端 msg_id：本地行 msg_id>0 后右键「回复/撤回」才可用
       await ChatStore.instance.updateSendStatus(
-          clientMsgId: clientMsgId, sendStatus: 1);
+          clientMsgId: clientMsgId, sendStatus: 1, msgId: msgId);
+      // 校准服务器时间，并用服务器 create_time 覆盖本地时间（撤回时限判定基准）
+      final serverTime = (data['server_time'] as num?)?.toInt() ?? 0;
+      final serverCreateTime = (data['create_time'] as num?)?.toInt() ?? 0;
+      if (serverTime > 0) {
+        serverTimeOffsetSec =
+            serverTime - (DateTime.now().millisecondsSinceEpoch ~/ 1000);
+      }
+      if (serverCreateTime > 0) {
+        await ChatStore.instance.updateServerCreateTime(
+            clientMsgId: clientMsgId, createTime: serverCreateTime);
+      }
       return (msgId: msgId, ok: true, error: '');
     } catch (e) {
       // 网络异常/超时：标记失败并入自动重发队列
@@ -215,10 +254,11 @@ class ChatService {
     });
   }
 
-  /// WS 重连成功：重置退避并立即尝试补发失败消息
+  /// WS 重连成功：重置退避、补发失败消息、同步离线期间漏掉的消息
   void onReconnected() {
     _retryDelay = 1;
     retryPending();
+    syncOffline();
   }
 
   /// 尝试补发所有失败消息
@@ -234,10 +274,12 @@ class ChatService {
         if (clientMsgId.isEmpty || receiverId <= 0 || plaintext.isEmpty) continue;
         final chatId = _chatId(_userId, receiverId);
         if (_retryingChatIds.contains(chatId)) continue;
-        // 重新走发送（幂等 client_msg_id）
+        // 重新走发送（幂等 client_msg_id；图片/表情消息需透传类型与缓存路径）
         final r = await sendMessage(
           receiverId: receiverId,
           plaintext: plaintext,
+          msgType: (m['msg_type'] as num?)?.toInt() ?? 1,
+          imageLocalPath: m['image_local_path']?.toString() ?? '',
           forceClientMsgId: clientMsgId,
         );
         if (r.ok) break; // 成功一条即退出，剩余下次触发
@@ -250,7 +292,65 @@ class ChatService {
   }
 
   /// 收到新消息（WS 推送）：解密并本地存储
-  Future<void> onIncomingMessage(Map<String, dynamic> msg) async {
+  ///
+  /// 多条消息到达时解密/入库耗时不同，若并发执行会导致**写入顺序颠倒**
+  /// （消息显示按本地自增 id 排序）。这里用串行队列保证严格按接收顺序入库。
+  Future<void> _storeChain = Future.value();
+
+  Future<void> onIncomingMessage(Map<String, dynamic> msg) {
+    final task = _storeChain.then((_) => _storeIncoming(msg));
+    // 单条失败不打断后续队列
+    _storeChain = task.catchError((_) {});
+    return task;
+  }
+
+  /// 断线增量同步：拉取离线期间漏掉的消息（WS 重连后调用）
+  ///
+  /// 以本地最大服务器消息 id 为游标，循环拉取 /chat/sync，
+  /// 复用 WS 推送的同一套解密入库逻辑（未读按 sender 是否正确累计）。
+  bool _syncing = false;
+  Future<void> syncOffline() async {
+    if (_userId <= 0 || _syncing) return;
+    _syncing = true;
+    // 记录发起同步时的账号；循环中检测到切换账号（_userId 变化）立即终止，
+    // 防止上一个账号的同步任务把消息写入新账号的库
+    final syncUid = _userId;
+    try {
+      var afterId = await ChatStore.instance.getMaxMsgId();
+      for (var page = 0; page < 10; page++) {
+        if (_userId != syncUid) return;
+        final resp = await ApiClient.instance
+            .syncChatMessages(afterId: afterId)
+            .timeout(const Duration(seconds: 10));
+        if (_userId != syncUid) return;
+        final json = ApiClient.safeJsonDecode(resp.body);
+        if (json['code'] != 0) break;
+        final list = (json['data'] ?? {})['list'] as List? ?? [];
+        if (list.isEmpty) break;
+        for (final raw in list) {
+          // 走同一串行队列，与实时消息交错到达时顺序仍确定
+          await onIncomingMessage(Map<String, dynamic>.from(raw));
+        }
+        afterId = (list.last['id'] as num?)?.toInt() ?? afterId;
+        if (list.length < 50) break;
+      }
+    } catch (_) {
+      // 同步失败静默，下次 WS 重连再同步
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  /// 退出登录/被踢下线时调用：重置账号上下文。
+  /// 置 0 后，尚未完成的 sync/WS 队列任务在 `_storeIncoming` 的身份校验处被拦截，
+  /// 不会把上一个账号的消息写入新库。
+  void logout() {
+    _userId = 0;
+    _ready = false;
+  }
+
+  /// 统一入库（WS 推送 / 断线同步共用）：解密并本地存储
+  Future<void> _storeIncoming(Map<String, dynamic> msg) async {
     final senderId = (msg['sender_id'] as num?)?.toInt() ?? 0;
     final receiverId = (msg['receiver_id'] as num?)?.toInt() ?? 0;
     final body = msg['body']?.toString() ?? '';
@@ -261,6 +361,18 @@ class ChatService {
     final msgType = (msg['msg_type'] as num?)?.toInt() ?? 1;
     final createTime = (msg['create_time'] as num?)?.toInt() ?? 0;
 
+    // 账号身份隔离：消息必须属于当前登录账号（sender 或 receiver 是 _userId），
+    // 否则丢弃。防止切换账号后，上一个账号的 WS 队列/sync 残留任务把消息
+    // 以新账号身份写入新库（会话列表串号）。
+    if (_userId <= 0 || (senderId != _userId && receiverId != _userId)) return;
+
+    // chatId 优先使用服务器权威值（推送/sync 都携带），
+    // 缺失时用双方 id 对称计算（与后端 chatId 规则一致）。
+    // 不能用 _chatId(_userId, receiverId)：接收方场景两者相等会算出 "B_B" 错误会话。
+    final chatId = (msg['chat_id']?.toString() ?? '').isNotEmpty
+        ? msg['chat_id']!.toString()
+        : _chatId(senderId, receiverId);
+
     // 解密（用本地私钥）
     String plaintext = '';
     try {
@@ -270,12 +382,16 @@ class ChatService {
         encKeyB64: ephem,
         privateKeyB64: await _privateKey(),
       );
+      // 清洗非法 UTF-16 代理项（解码可能产生孤立 surrogate，渲染会崩）
+      plaintext = sanitizeUtf16(plaintext);
     } catch (_) {
       plaintext = '[无法解密的消息]';
     }
 
-    final chatId = _chatId(_userId, receiverId);
-    await ChatStore.instance.upsertMessage(
+    // 本地已删除的消息：跳过（多选删除为仅本设备删除，防止"复活"）
+    if (await ChatStore.instance.isMsgDeleted(msgId)) return;
+
+    final inserted = await ChatStore.instance.upsertMessage(
       chatId: chatId,
       msgId: msgId,
       clientMsgId: clientMsgId.isEmpty
@@ -291,21 +407,52 @@ class ChatService {
       sendStatus: 1,
       createTime: createTime,
     );
+    // 新收到的对方消息 → 离线消息通知（WS 实时 / 断线 sync 都走这里，
+    // 只有真正新插入才通知，天然去重；正在查看该会话时不弹）
+    if (inserted && senderId != _userId && msgId > 0) {
+      unawaited(ChatNotifier.instance.handleNewMessage(
+        msgId: msgId,
+        chatId: chatId,
+        peerId: senderId,
+        msgType: msgType,
+        plaintext: plaintext,
+      ));
+    }
+
+    // 图片消息：异步下载并本地缓存（不阻塞入库；失败回退云端 URL，下次再触发）
+    if (msgType == 2) {
+      final url = ChatImageCache.parseUrl(plaintext);
+      if (url.isNotEmpty) {
+        final realClientId =
+            clientMsgId.isEmpty ? 'in_$msgId' : clientMsgId;
+        ChatImageCache.ensureCached(url).then((path) async {
+          if (path != null) {
+            await ChatStore.instance
+                .updateImageLocalPath(clientMsgId: realClientId, path: path);
+          }
+        });
+      }
+    }
 
     // 更新会话摘要（未读数 +1；对方发来的才计）
+    // 对端推导：sender 是我（自己其它设备的推送）则 peer=receiver，否则 peer=sender
+    final peerId = senderId == _userId ? receiverId : senderId;
     await ChatStore.instance.upsertConversation(
       chatId: chatId,
-      peerId: senderId,
+      peerId: peerId,
       peerNickname: '',
       peerAvatar: '',
-      lastMsgText: plaintext,
+      lastMsgText:
+          ChatStore.conversationPreview({'msg_type': msgType, 'plaintext': plaintext}),
       lastMsgTime: createTime,
       unreadDelta: senderId != _userId ? 1 : 0,
     );
   }
 
   /// 拉取会话历史（服务器密文）→ 解密 → 本地存储
-  Future<void> pullHistory({
+  ///
+  /// 返回本次拉取的条数（0 = 服务器已无更早历史），供上滑加载更多判断
+  Future<int> pullHistory({
     required int peerId,
     int? beforeId,
     int pageSize = 50,
@@ -317,8 +464,15 @@ class ChatService {
         pageSize: pageSize,
       );
       final json = ApiClient.safeJsonDecode(resp.body);
-      if (json['code'] != 0) return;
-      final list = (json['data'] ?? {})['list'] as List? ?? [];
+      if (json['code'] != 0) return 0;
+      final data = (json['data'] ?? {}) as Map;
+      final list = data['list'] as List? ?? [];
+      // 校准服务器时间（撤回时限等时效判断用）
+      final serverTime = (data['server_time'] as num?)?.toInt() ?? 0;
+      if (serverTime > 0) {
+        serverTimeOffsetSec =
+            serverTime - (DateTime.now().millisecondsSinceEpoch ~/ 1000);
+      }
       final priv = await _privateKey();
       for (final raw in list) {
         final m = (raw as Map).cast<String, dynamic>();
@@ -333,12 +487,17 @@ class ChatService {
             encKeyB64: ephem,
             privateKeyB64: priv,
           );
+          // 清洗非法 UTF-16 代理项（渲染防崩）
+          plaintext = sanitizeUtf16(plaintext);
         } catch (_) {
           plaintext = '[无法解密的消息]';
         }
+        // 本地已删除的消息：跳过（多选删除为仅本设备删除，防止"复活"）
+        final serverMsgId = (m['id'] as num?)?.toInt() ?? 0;
+        if (await ChatStore.instance.isMsgDeleted(serverMsgId)) continue;
         await ChatStore.instance.upsertMessage(
           chatId: _chatId(_userId, peerId),
-          msgId: (m['id'] as num?)?.toInt() ?? 0,
+          msgId: serverMsgId,
           clientMsgId: m['client_msg_id']?.toString() ??
               'h_${m['id']}',
           senderId: (m['sender_id'] as num?)?.toInt() ?? 0,
@@ -351,9 +510,26 @@ class ChatService {
           sendStatus: 1,
           createTime: (m['create_time'] as num?)?.toInt() ?? 0,
         );
+        // 图片消息：异步下载本地缓存（历史记录读本地，不再回云端）
+        final mType = (m['msg_type'] as num?)?.toInt() ?? 1;
+        if (mType == 2) {
+          final url = ChatImageCache.parseUrl(plaintext);
+          if (url.isNotEmpty) {
+            final realClientId =
+                m['client_msg_id']?.toString() ?? 'h_${m['id']}';
+            ChatImageCache.ensureCached(url).then((path) async {
+              if (path != null) {
+                await ChatStore.instance.updateImageLocalPath(
+                    clientMsgId: realClientId, path: path);
+              }
+            });
+          }
+        }
       }
+      return list.length;
     } catch (_) {
       // 拉取失败静默
+      return 0;
     }
   }
 

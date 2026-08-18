@@ -12,6 +12,8 @@ import '../core/app_theme.dart';
 import '../core/device_service.dart';
 import '../widgets/notify.dart';
 import '../services/secure_storage.dart';
+import '../utils/text_sanitize.dart';
+import '../widgets/text_input_menu.dart';
 
 /// 注册成功回调（注册成功自动登录后携带用户信息进入主界面）
 typedef RegisterSuccess = void Function(Map<String, dynamic> user);
@@ -247,46 +249,73 @@ class _RegisterPageState extends State<RegisterPage> {
                             const SizedBox(height: 24),
 
                             // 昵称
-                            TextField(
+                            TextInputBubbleMenu(
                               controller: _nicknameCtrl,
-                              style: TextStyle(color: textCol),
-                              decoration: _inputDecoration(
-                                  '昵称', '展示昵称', fieldBg, textCol, mutedCol),
+                              child: TextField(
+                                controller: _nicknameCtrl,
+                                // 禁用系统右键菜单（统一用气泡方案）
+                                contextMenuBuilder: (_, __) =>
+                                    const SizedBox.shrink(),
+                                // 过滤粘贴/输入的非法 UTF-16 代理项（防渲染崩溃）
+                                inputFormatters: const [
+                                  Utf16SanitizeTextInputFormatter()
+                                ],
+                                style: TextStyle(color: textCol),
+                                decoration: _inputDecoration('昵称', '展示昵称',
+                                    fieldBg, textCol, mutedCol),
+                              ),
                             ),
                             const SizedBox(height: 14),
 
                             // 手机号
-                            TextField(
+                            TextInputBubbleMenu(
                               controller: _phoneCtrl,
-                              keyboardType: TextInputType.phone,
-                              style: TextStyle(color: textCol),
-                              decoration: _inputDecoration(
-                                  '手机号', '用于找回密码', fieldBg, textCol, mutedCol),
+                              child: TextField(
+                                controller: _phoneCtrl,
+                                keyboardType: TextInputType.phone,
+                                // 禁用系统右键菜单（统一用气泡方案）
+                                contextMenuBuilder: (_, __) =>
+                                    const SizedBox.shrink(),
+                                // 过滤粘贴/输入的非法 UTF-16 代理项（防渲染崩溃）
+                                inputFormatters: const [
+                                  Utf16SanitizeTextInputFormatter()
+                                ],
+                                style: TextStyle(color: textCol),
+                                decoration: _inputDecoration('手机号', '用于找回密码',
+                                    fieldBg, textCol, mutedCol),
+                              ),
                             ),
                             const SizedBox(height: 14),
 
                             // 密码
-                            TextField(
+                            TextInputBubbleMenu(
                               controller: _passwordCtrl,
-                              obscureText: _obscure,
-                              // 仅允许英文/数字/英文标点（禁止中文、空格、emoji）
-                              inputFormatters: [
-                                FilteringTextInputFormatter.allow(
-                                    RegExp(r'[\x21-\x7E]')),
-                              ],
-                              style: TextStyle(color: textCol),
-                              decoration: _inputDecoration(
-                                      '密码', '至少6位', fieldBg, textCol, mutedCol)
-                                  .copyWith(
-                                // ExcludeFocus：Tab 键跳过「显示密码」按钮
-                                suffixIcon: ExcludeFocus(
-                                  child: IconButton(
-                                    icon: Icon(_obscure
-                                        ? Icons.visibility_off
-                                        : Icons.visibility),
-                                    color: mutedCol,
-                                    onPressed: () =>
-                                        setState(() => _obscure = !_obscure),
+                              obscure: true,
+                              child: TextField(
+                                controller: _passwordCtrl,
+                                obscureText: _obscure,
+                                // 禁用系统右键菜单（统一用气泡方案）
+                                contextMenuBuilder: (_, __) =>
+                                    const SizedBox.shrink(),
+                                // 仅允许英文/数字/英文标点（禁止中文、空格、emoji）
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                      RegExp(r'[\x21-\x7E]')),
+                                ],
+                                style: TextStyle(color: textCol),
+                                decoration: _inputDecoration('密码', '至少6位',
+                                        fieldBg, textCol, mutedCol)
+                                    .copyWith(
+                                  // ExcludeFocus：Tab 键跳过「显示密码」按钮
+                                  suffixIcon: ExcludeFocus(
+                                    child: IconButton(
+                                      icon: Icon(_obscure
+                                          ? Icons.visibility_off
+                                          : Icons.visibility),
+                                      color: mutedCol,
+                                      onPressed: () => setState(
+                                          () => _obscure = !_obscure),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -294,17 +323,24 @@ class _RegisterPageState extends State<RegisterPage> {
                             const SizedBox(height: 14),
 
                             // 确认密码
-                            TextField(
+                            TextInputBubbleMenu(
                               controller: _confirmCtrl,
-                              obscureText: _obscure,
-                              // 仅允许英文/数字/英文标点（禁止中文、空格、emoji）
-                              inputFormatters: [
-                                FilteringTextInputFormatter.allow(
-                                    RegExp(r'[\x21-\x7E]')),
-                              ],
-                              style: TextStyle(color: textCol),
-                              decoration: _inputDecoration(
-                                  '确认密码', '再次输入密码', fieldBg, textCol, mutedCol),
+                              obscure: true,
+                              child: TextField(
+                                controller: _confirmCtrl,
+                                obscureText: _obscure,
+                                // 禁用系统右键菜单（统一用气泡方案）
+                                contextMenuBuilder: (_, __) =>
+                                    const SizedBox.shrink(),
+                                // 仅允许英文/数字/英文标点（禁止中文、空格、emoji）
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                      RegExp(r'[\x21-\x7E]')),
+                                ],
+                                style: TextStyle(color: textCol),
+                                decoration: _inputDecoration('确认密码', '再次输入密码',
+                                    fieldBg, textCol, mutedCol),
+                              ),
                             ),
                             const SizedBox(height: 14),
 
@@ -314,11 +350,21 @@ class _RegisterPageState extends State<RegisterPage> {
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   Expanded(
-                                    child: TextField(
+                                    child: TextInputBubbleMenu(
                                       controller: _captchaCtrl,
-                                      style: TextStyle(color: textCol),
-                                      decoration: _inputDecoration('验证码',
-                                          '请输入验证码', fieldBg, textCol, mutedCol),
+                                      child: TextField(
+                                        controller: _captchaCtrl,
+                                        // 禁用系统右键菜单（统一用气泡方案）
+                                        contextMenuBuilder: (_, __) =>
+                                            const SizedBox.shrink(),
+                                        // 过滤粘贴/输入的非法 UTF-16 代理项（防渲染崩溃）
+                                        inputFormatters: const [
+                                          Utf16SanitizeTextInputFormatter()
+                                        ],
+                                        style: TextStyle(color: textCol),
+                                        decoration: _inputDecoration('验证码',
+                                            '请输入验证码', fieldBg, textCol, mutedCol),
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 10),

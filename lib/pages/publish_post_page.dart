@@ -12,7 +12,10 @@ import '../widgets/notify.dart';
 import '../widgets/pick_images.dart';
 import 'post_detail_page.dart';
 import '../services/post_draft_store.dart';
+import '../utils/image_transcoder.dart';
+import '../utils/text_sanitize.dart';
 import '../widgets/sticker_panel.dart';
+import '../widgets/text_input_menu.dart';
 
 /// 发动态页：类小红书发帖。
 ///
@@ -133,8 +136,14 @@ class _PublishPostPageState extends State<PublishPostPage> {
         NotifyStack.warning('图片「${img.name}」超过 10MB，已跳过', title: '提示');
         continue;
       }
-      _images.add(img.bytes);
-      _imageNames.add(img.name);
+      // 客户端统一转码：webp/png/bmp → jpg；GIF 保留动画
+      final t = await ImageTranscoder.toJpeg(bytes: img.bytes, name: img.name);
+      if (t == null) {
+        NotifyStack.warning('图片「${img.name}」格式不支持，已跳过', title: '提示');
+        continue;
+      }
+      _images.add(t.bytes);
+      _imageNames.add(t.name);
     }
     if (mounted) setState(() {});
   }
@@ -445,23 +454,33 @@ class _PublishPostPageState extends State<PublishPostPage> {
         Expanded(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-            child: TextField(
+            child: TextInputBubbleMenu(
               controller: _contentCtrl,
-              focusNode: _contentFocus,
-              maxLength: _maxContent,
-              minLines: null,
-              maxLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              keyboardType: TextInputType.multiline,
-              style: TextStyle(fontSize: 15, color: textColor(b), height: 1.6),
-              decoration: InputDecoration(
-                hintText: '分享你的新鲜事…',
-                hintStyle: TextStyle(fontSize: 15, color: textFaintColor(b)),
-                border: InputBorder.none,
-                counterStyle: TextStyle(fontSize: 11, color: textFaintColor(b)),
+              child: TextField(
+                controller: _contentCtrl,
+                focusNode: _contentFocus,
+                maxLength: _maxContent,
+                minLines: null,
+                maxLines: null,
+                expands: true,
+                // 禁用系统右键菜单（统一用气泡方案）
+                contextMenuBuilder: (_, __) => const SizedBox.shrink(),
+                // 过滤粘贴/输入的非法 UTF-16 代理项（防渲染崩溃）
+                inputFormatters: const [Utf16SanitizeTextInputFormatter()],
+                textAlignVertical: TextAlignVertical.top,
+                keyboardType: TextInputType.multiline,
+                style:
+                    TextStyle(fontSize: 15, color: textColor(b), height: 1.6),
+                decoration: InputDecoration(
+                  hintText: '分享你的新鲜事…',
+                  hintStyle:
+                      TextStyle(fontSize: 15, color: textFaintColor(b)),
+                  border: InputBorder.none,
+                  counterStyle:
+                      TextStyle(fontSize: 11, color: textFaintColor(b)),
+                ),
+                onChanged: (_) => setState(() {}),
               ),
-              onChanged: (_) => setState(() {}),
             ),
           ),
         ),

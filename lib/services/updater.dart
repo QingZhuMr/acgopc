@@ -7,8 +7,8 @@ import '../core/api_client.dart';
 import '../core/app_config.dart';
 import '../widgets/notify.dart';
 
-/// 更新包目标平台
-enum UpdatePlatform { android, ios, win, mac }
+/// 更新包目标平台（与后端 admin 枚举一致）
+enum UpdatePlatform { win, mac, linux, android, ios, ipados, harmony }
 
 /// 更新版本信息（后端推送内容）
 class UpdateInfo {
@@ -41,12 +41,20 @@ class UpdateInfo {
 
   static UpdatePlatform _parsePlatform(String? p) {
     switch (p) {
+      case 'win':
+        return UpdatePlatform.win;
+      case 'mac':
+        return UpdatePlatform.mac;
+      case 'linux':
+        return UpdatePlatform.linux;
       case 'android':
         return UpdatePlatform.android;
       case 'ios':
         return UpdatePlatform.ios;
-      case 'mac':
-        return UpdatePlatform.mac;
+      case 'ipados':
+        return UpdatePlatform.ipados;
+      case 'harmony':
+        return UpdatePlatform.harmony;
       default:
         return UpdatePlatform.win;
     }
@@ -59,12 +67,14 @@ class Updater {
 
   static final Updater instance = Updater._();
 
-  /// 客户端当前平台标识
+  /// 客户端当前平台标识（按本机系统判断，只接受本平台更新）
   static UpdatePlatform get _clientPlatform {
     if (Platform.isAndroid) return UpdatePlatform.android;
     if (Platform.isIOS) return UpdatePlatform.ios;
+    if (Platform.isLinux) return UpdatePlatform.linux;
     if (Platform.isMacOS) return UpdatePlatform.mac;
     return UpdatePlatform.win;
+    // iPadOS / 鸿蒙OS：Flutter 无直接 API，iOS 判断覆盖 iPadOS；鸿蒙暂走 Android
   }
 
   /// 缓存目录：忽略版本记录（config 目录，属用户偏好，退出登录保留）
@@ -127,14 +137,20 @@ class Updater {
 
   String _platformName(UpdatePlatform p) {
     switch (p) {
+      case UpdatePlatform.win:
+        return 'win';
+      case UpdatePlatform.mac:
+        return 'mac';
+      case UpdatePlatform.linux:
+        return 'linux';
       case UpdatePlatform.android:
         return 'android';
       case UpdatePlatform.ios:
         return 'ios';
-      case UpdatePlatform.mac:
-        return 'mac';
-      case UpdatePlatform.win:
-        return 'win';
+      case UpdatePlatform.ipados:
+        return 'ipados';
+      case UpdatePlatform.harmony:
+        return 'harmony';
     }
   }
 
@@ -197,57 +213,164 @@ class Updater {
       persistent: true,
       onDismiss: null,
     ));
-    final ok = await _downloadAndPrepare(info);
-    if (ok) {
+    final method = await _downloadAndPrepare(info);
+    if (method != null) {
       NotifyStack.instance.dismiss('update_progress_${info.version}');
       NotifyStack.instance.dismiss('update_${info.version}');
       NotifyStack.success('更新包已就绪，即将重启…');
-      // 延迟一点让用户看到成功提示，然后重启
-      Future.delayed(const Duration(seconds: 2), _restartAndInstall);
+      // 延迟一点让用户看到成功提示，然后安装
+      final installMethod = method;
+      Future.delayed(const Duration(seconds: 2), () async {
+        await _installByMethod(installMethod);
+      });
     } else {
       NotifyStack.instance.dismiss('update_progress_${info.version}');
       NotifyStack.warning('下载失败，请稍后重试');
     }
   }
 
-  /// 下载安装包到临时目录
-  Future<bool> _downloadAndPrepare(UpdateInfo info) async {
+  /// 下载安装包到临时目录，并按包类型准备安装方式。
+  ///
+  /// 安装包类型由 URL 扩展名 / 平台推断：
+  /// - Windows `.exe`：直接启动安装器（安装器会等待当前进程退出）
+  /// - Windows `.zip`：解压到临时目录，替换运行目录下的可执行文件
+  /// - macOS `.dmg` / `.pkg`：用 `open` 打开安装
+  ///
+  /// 返回安装准备就绪后需要执行的安装方式；失败返回 null。
+  Future<String?> _downloadAndPrepare(UpdateInfo info) async {
     try {
       final resp = await http.get(Uri.parse(info.downloadUrl));
-      if (resp.statusCode != 200) return false;
+      if (resp.statusCode != 200) return null;
+      final bytes = resp.bodyBytes;
+      if (bytes.isEmpty) return null;
       final tmp = Directory.systemTemp;
-      // Windows 解压后启动安装；其他平台直接打开下载的包
-      final ext = _platformName(info.platform) == 'win'
-          ? '.exe'
-          : (_platformName(info.platform) == 'android' ? '.apk' : '.pkg');
-      final outFile = File('${tmp.path}${Platform.pathSeparator}acgo_update_$ext');
-      await outFile.writeAsBytes(resp.bodyBytes, flush: true);
-      return true;
+      final fileName = _fileNameFromUrl(info.downloadUrl);
+      final outFile =
+          File('${tmp.path}${Platform.pathSeparator}acgo_update_$fileName');
+      await outFile.writeAsBytes(bytes, flush: true);
+      return _installMethodFor(fileName);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 从 URL 取文件名
+  String _fileNameFromUrl(String url) {
+    try {
+      final seg = Uri.parse(url).pathSegments;
+      if (seg.isNotEmpty && seg.last.isNotEmpty) return seg.last;
+    } catch (_) {}
+    return 'update.bin';
+  }
+
+  /// 根据文件名推断安装方式：
+  /// 'exe' / 'zip' / 'dmg' / 'pkg' / 'apk'；未知扩展名按平台回退
+  String _installMethodFor(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.exe')) return 'exe';
+    if (lower.endsWith('.zip')) return 'zip';
+    if (lower.endsWith('.dmg')) return 'dmg';
+    if (lower.endsWith('.pkg')) return 'pkg';
+    if (lower.endsWith('.apk')) return 'apk';
+    // 未知：按平台回退（win→exe，mac→pkg）
+    return Platform.isMacOS ? 'pkg' : 'exe';
+  }
+
+  /// 安装更新：
+  /// - exe：启动安装器（installer 等待进程退出后安装）→ 退出当前进程
+  /// - zip：弹不可关闭的"正在安装"提示 → 写独立安装脚本 → 启动脚本 →
+  ///   退出进程；脚本等主进程退出后自动解压覆盖安装目录并启动新 exe
+  /// - dmg/pkg（mac）：open 打开安装包 → 退出当前进程
+  /// - apk：启动安装（移动端不适用，跳过）
+  Future<bool> _installByMethod(String method) async {
+    final tmp = Directory.systemTemp;
+    final candidates = Directory(tmp.path)
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.contains('acgo_update_'))
+        .toList();
+    if (candidates.isEmpty) return false;
+    final updateFile = candidates.first;
+
+    try {
+      switch (method) {
+        case 'exe':
+          if (!Platform.isWindows) return false;
+          await Process.start(updateFile.path, [],
+              mode: ProcessStartMode.detached);
+          exit(0);
+        case 'zip':
+          if (!Platform.isWindows) return false;
+          return await _installZip(updateFile.path);
+        case 'dmg':
+        case 'pkg':
+          if (!Platform.isMacOS) return false;
+          await Process.start('open', [updateFile.path],
+              mode: ProcessStartMode.detached);
+          exit(0);
+        default:
+          return false;
+      }
     } catch (_) {
       return false;
     }
   }
 
-  /// 重启并安装更新（Windows：直接启动安装 exe；macOS：open 打开安装包）
-  Future<void> _restartAndInstall() async {
+  /// zip 更新（**仅 Windows 生效**）：静默覆盖安装。
+  /// 写独立安装脚本 → detached 启动 → 退出当前进程；
+  /// 脚本等旧进程退出后解压覆盖安装目录、启动新 exe、删除 zip 与脚本。
+  /// 全程无弹窗（静默）。
+  Future<bool> _installZip(String zipPath) async {
     try {
-      final tmp = Directory.systemTemp;
-      final candidates = [
-        '${tmp.path}${Platform.pathSeparator}acgo_update.exe',
-        '${tmp.path}${Platform.pathSeparator}acgo_update.apk',
-        '${tmp.path}${Platform.pathSeparator}acgo_update.pkg',
-      ];
-      for (final p in candidates) {
-        if (File(p).existsSync()) {
-          if (Platform.isMacOS) {
-            // macOS：通过 open 打开 pkg 安装包
-            await Process.start('open', [p], mode: ProcessStartMode.detached);
-          } else {
-            await Process.start(p, [], mode: ProcessStartMode.detached);
-          }
-          exit(0);
-        }
-      }
-    } catch (_) {}
+      // 1. 写安装脚本（等主进程退出 → 解压覆盖 → 启动新 exe → 清理安装文件）
+      final exePath = Platform.resolvedExecutable; // 当前运行的 exe 绝对路径
+      final installDir = File(exePath).parent.path; // 安装目录
+      final exeName = File(exePath).path.split(Platform.pathSeparator).last;
+      final scriptPath =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}acgo_install.bat';
+      // 脚本：等待主进程退出（最多 30s）→ 解压 zip 覆盖安装目录 → 启动新 exe
+      // → 删除下载的 zip 与安装脚本（静默覆盖，无任何弹窗）
+      final script = '''
+@echo off
+setlocal
+rem 等待旧进程退出
+for /L %%i in (1,1,30) do (
+  tasklist /FI "IMAGENAME eq ${exeName}" 2>nul | find /I "${exeName}" >nul
+  if errorlevel 1 goto :done_wait
+  timeout /t 1 /nobreak >nul
+)
+:done_wait
+rem 静默解压 zip 覆盖安装目录
+powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${installDir}' -Force"
+rem 启动新 exe（解压后可能是主 exe 或子目录，递归取第一个 exe）
+for /R "${installDir}" %%f in (*.exe) do (
+  if /I "%%f" NEQ "${exePath}" (
+    start "" "%%f"
+    goto :launched
+  )
+)
+:launched
+rem 静默删除下载的 zip 与安装脚本
+del /f /q "${zipPath}" >nul 2>&1
+del /f /q "%~f0" >nul 2>&1
+exit
+''';
+      final scriptFile = File(scriptPath);
+      await scriptFile.writeAsString(script, flush: true);
+
+      // 2. 后台静默启动安装脚本（PowerShell 隐藏窗口，避免闪黑窗）
+      await Process.start('powershell', [
+        '-NoProfile',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        'Start-Process -FilePath "$scriptPath" -WindowStyle Hidden',
+      ], mode: ProcessStartMode.detached);
+
+      // 3. 退出当前进程（脚本会接管后续，静默覆盖）
+      exit(0);
+    } catch (_) {
+      return false;
+    }
   }
 }

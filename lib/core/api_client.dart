@@ -264,6 +264,19 @@ class ApiClient {
     );
   }
 
+  /// 添加到表情（业务接口）：收藏聊天中收到的表情到自己的表情库
+  Future<http.Response> addSticker({required String url}) {
+    final path = '/sticker/add';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'url': url},
+    );
+  }
+
   /// 删除表情包（业务接口）：只能删除自己上传的
   Future<http.Response> deleteSticker({required int stickerId}) {
     final path = '/sticker/delete';
@@ -446,6 +459,63 @@ class ApiClient {
     );
   }
 
+  /// 拉黑 / 取消拉黑（切换，业务接口）
+  ///
+  /// 拉黑时后端自动解除双方关注（好友关系解除）。返回 data：{ is_blocked }
+  Future<http.Response> blockUser(int targetUid) {
+    final path = '/user/block';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'target_uid': '$targetUid'},
+    );
+  }
+
+  /// 拉黑状态（业务接口）
+  ///
+  /// 返回 data：{ is_blocked（我拉黑了他）, blocked_me（他拉黑了我） }
+  Future<http.Response> getBlockStatus(int targetUid) {
+    final path = '/user/blockStatus';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      'target_uid': '$targetUid',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
+  /// 设置好友备注（业务接口）：存于「我关注对方」的关系上，仅自己可见
+  Future<http.Response> setRemark(int targetUid, String remark) {
+    final path = '/user/setRemark';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'target_uid': '$targetUid', 'remark': remark},
+    );
+  }
+
+  /// 取消好友（业务接口）：解除双方关注（好友 = 互相关注）
+  Future<http.Response> removeFriend(int targetUid) {
+    final path = '/user/removeFriend';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'target_uid': '$targetUid'},
+    );
+  }
+
   /// 关注状态（业务接口）
   ///
   /// 返回 data：{ is_following, is_mutual }
@@ -560,6 +630,7 @@ class ApiClient {
     required String nonce,
     required String ephemeralPub,
     required String clientMsgId,
+    int msgType = 1,
   }) {
     final path = '/chat/send';
     return http.post(
@@ -570,7 +641,7 @@ class ApiClient {
       },
       body: {
         'receiver_id': '$receiverId',
-        'msg_type': '1',
+        'msg_type': '$msgType',
         'body': body,
         'nonce': nonce,
         'ephemeral_pub': ephemeralPub,
@@ -599,9 +670,57 @@ class ApiClient {
     );
   }
 
+  /// 清空会话（删除服务器缓存记录 + WS 通知双方多端同步清除）
+  Future<http.Response> clearChat({
+    required int peerId,
+  }) {
+    final path = '/chat/clear';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'peer_id': '$peerId'},
+    );
+  }
+
+  /// 断线增量同步：拉取 after_id 之后当前用户参与的所有消息（业务接口）
+  Future<http.Response> syncChatMessages({
+    required int afterId,
+    int limit = 50,
+  }) {
+    final path = '/chat/sync';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      'after_id': '$afterId',
+      'limit': '$limit',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
   /// 标记已读（业务接口）
   ///
   /// POST peer_id、msg_id（读到哪条），服务端记录并 WS 推送 chat_read
+  Future<http.Response> recallChatMessage({
+    required int peerId,
+    required int msgId,
+  }) {
+    final path = '/chat/recall';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'peer_id': '$peerId', 'msg_id': '$msgId'},
+    );
+  }
+
   Future<http.Response> markChatRead({
     required int peerId,
     required int msgId,
@@ -762,6 +881,25 @@ class ApiClient {
       });
     request.files.add(
       http.MultipartFile.fromBytes('avatar', bytes, filename: filename),
+    );
+    return request.send().then((resp) => http.Response.fromStream(resp));
+  }
+
+  /// 上传聊天图片（压缩后 URL 加密进消息体发送）
+  Future<http.Response> uploadChatImage(Uint8List bytes,
+      {String filename = 'chat.png'}) {
+    final path = '/chat/upload';
+    final ts = AppConfig.nowTimestamp().toString();
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse(AppConfig.api(path)),
+    )..headers.addAll({
+        'X-Timestamp': ts,
+        'X-Signature': sign(ts, path),
+        'X-Device-Key': DeviceService.instance.getDeviceKey(),
+      });
+    request.files.add(
+      http.MultipartFile.fromBytes('image', bytes, filename: filename),
     );
     return request.send().then((resp) => http.Response.fromStream(resp));
   }

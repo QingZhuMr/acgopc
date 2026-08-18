@@ -47,11 +47,16 @@ class StickerPanel extends StatefulWidget {
   final ValueChanged<StickerItem> onSticker;
   final VoidCallback? onUploaded;
 
+  /// 透明模式：去掉自身圆角背景容器（用于嵌入 BubbleMenu 气泡等
+  /// 已有背景的宿主，避免双重背景）
+  final bool transparent;
+
   const StickerPanel({
     super.key,
     required this.onEmoji,
     required this.onSticker,
     this.onUploaded,
+    this.transparent = false,
   });
 
   @override
@@ -59,6 +64,10 @@ class StickerPanel extends StatefulWidget {
 }
 
 class _StickerPanelState extends State<StickerPanel> {
+  /// 本会话内已确认失效（云端文件 404）的表情包 id：加载列表时过滤，
+  /// 避免每次打开面板都闪一下破损占位。应用重启后重新检测一次。
+  static final Set<int> _brokenStickerIds = <int>{};
+
   int _tab = 0;
   List<StickerItem> _stickers = [];
   bool _loadingStickers = false;
@@ -81,7 +90,10 @@ class _StickerPanelState extends State<StickerPanel> {
         final items = list
             .map((e) => StickerItem.fromJson(
                 (e as Map<String, dynamic>?) ?? <String, dynamic>{}))
-            .where((s) => s.id > 0 && s.url.isNotEmpty)
+            .where((s) =>
+                s.id > 0 &&
+                s.url.isNotEmpty &&
+                !_brokenStickerIds.contains(s.id))
             .toList();
         if (mounted) setState(() => _stickers = items);
       }
@@ -126,6 +138,26 @@ class _StickerPanelState extends State<StickerPanel> {
     }
   }
 
+  /// 表情包图片加载失败（云端文件已删/404）：静默清理。
+  ///
+  /// 优先调后端删除接口（软删自己上传的失效表情），无论删除是否成功
+  /// 都从本地列表屏蔽该条目（避免一直显示破损占位），并记入本会话黑名单。
+  Future<void> _handleStickerLoadError(StickerItem s) async {
+    if (!mounted) return;
+    // 去重：条目可能已被移除/正在处理（errorBuilder 理论上只触发一次，双保险）
+    if (!_stickers.any((e) => e.id == s.id)) return;
+    // 记入黑名单（本会话内加载列表时过滤）
+    _brokenStickerIds.add(s.id);
+    // 从本地列表移除（先移除再删库，防止 rebuild 递归触发）
+    setState(() => _stickers.removeWhere((e) => e.id == s.id));
+    try {
+      // 仅自己上传的才能删（后端校验）；非本人上传的失效表情只做本地屏蔽
+      await ApiClient.instance.deleteSticker(stickerId: s.id);
+    } catch (_) {
+      // 静默：删除失败不影响屏蔽效果
+    }
+  }
+
   /// 删除表情包（只能删自己上传的）
   Future<void> _deleteSticker(StickerItem s) async {
     if (!s.isMine) {
@@ -154,23 +186,28 @@ class _StickerPanelState extends State<StickerPanel> {
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
+    // 透明模式（嵌入气泡）：不画背景/边框，由宿主气泡提供
     return Container(
-      decoration: BoxDecoration(
-        color: bgHoverColor(b),
-        borderRadius: BorderRadius.circular(kRadiusMd),
-        border: Border.all(color: b == Brightness.dark ? DarkColors.border : LightColors.border),
-      ),
-      clipBehavior: Clip.antiAlias,
+      decoration: widget.transparent
+          ? null
+          : BoxDecoration(
+              color: bgHoverColor(b),
+              borderRadius: BorderRadius.circular(kRadiusMd),
+              border: Border.all(
+                  color:
+                      b == Brightness.dark ? DarkColors.border : LightColors.border),
+            ),
+      clipBehavior: widget.transparent ? Clip.none : Clip.antiAlias,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 顶栏：tab 切换
+          // 顶栏：tab 切换（表情图标 + 爱心图标，微信式）
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             child: Row(
               children: [
-                _tabButton(b, 0, '表情'),
-                _tabButton(b, 1, '表情包'),
+                _tabButton(b, 0, Icons.emoji_emotions_outlined),
+                _tabButton(b, 1, Icons.favorite_outline),
                 const Spacer(),
               ],
             ),
@@ -191,7 +228,7 @@ class _StickerPanelState extends State<StickerPanel> {
     );
   }
 
-  Widget _tabButton(Brightness b, int tab, String label) {
+  Widget _tabButton(Brightness b, int tab, IconData icon) {
     final selected = _tab == tab;
     return InkWell(
       onTap: () => setState(() => _tab = tab),
@@ -199,13 +236,10 @@ class _StickerPanelState extends State<StickerPanel> {
       borderRadius: BorderRadius.circular(kRadiusMd),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-            color: selected ? kPrimary : textMutedColor(b),
-          ),
+        child: Icon(
+          icon,
+          size: 20,
+          color: selected ? kPrimary : textMutedColor(b),
         ),
       ),
     );
@@ -231,8 +265,8 @@ class _StickerPanelState extends State<StickerPanel> {
             crossAxisCount: 8,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 2,
-            crossAxisSpacing: 2,
+            mainAxisSpacing: 0,
+            crossAxisSpacing: 0,
             childAspectRatio: 1.2,
             children: [
               for (final e in EmojiData.groups[gi])
@@ -274,8 +308,9 @@ class _StickerPanelState extends State<StickerPanel> {
             animationCurve: Curves.easeOutCubic,
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 56,
-              mainAxisSpacing: 2,
-              crossAxisSpacing: 2,
+              // 表情包之间留出较宽间距（微信式网格呼吸感）
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
             ),
             // 前两格固定：+ 号（上传）与 - 号（删除模式切换），其余为表情包
             itemCount: _stickers.length + 2,
@@ -353,6 +388,8 @@ class _StickerPanelState extends State<StickerPanel> {
                 height: 56,
                 bgColor: b == Brightness.dark ? DarkColors.bg : LightColors.bg,
                 errorIconSize: 18,
+                // 云端图片文件已删/404 → 自动删除数据库记录（自己上传的）或本地屏蔽
+                onError: () => _handleStickerLoadError(s),
               );
               // 删除模式：点击删除（仅自己上传的），否则点击插入
               if (_deleteMode) {
@@ -428,7 +465,10 @@ class _StickerPanelState extends State<StickerPanel> {
 class EmojiPanel extends StatefulWidget {
   final ValueChanged<String> onEmoji;
 
-  const EmojiPanel({super.key, required this.onEmoji});
+  /// 透明模式：去掉自身背景容器（嵌入 BubbleMenu 气泡等已有背景宿主）
+  final bool transparent;
+
+  const EmojiPanel({super.key, required this.onEmoji, this.transparent = false});
 
   @override
   State<EmojiPanel> createState() => _EmojiPanelState();
@@ -439,13 +479,15 @@ class _EmojiPanelState extends State<EmojiPanel> {
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
     return Container(
-      decoration: BoxDecoration(
-        color: bgHoverColor(b),
-        borderRadius: BorderRadius.circular(kRadiusMd),
-        border: Border.all(
-            color: b == Brightness.dark ? DarkColors.border : LightColors.border),
-      ),
-      clipBehavior: Clip.antiAlias,
+      decoration: widget.transparent
+          ? null
+          : BoxDecoration(
+              color: bgHoverColor(b),
+              borderRadius: BorderRadius.circular(kRadiusMd),
+              border: Border.all(
+                  color: b == Brightness.dark ? DarkColors.border : LightColors.border),
+            ),
+      clipBehavior: widget.transparent ? Clip.none : Clip.antiAlias,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -502,8 +544,8 @@ class _EmojiPanelState extends State<EmojiPanel> {
             crossAxisCount: 8,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 2,
-            crossAxisSpacing: 2,
+            mainAxisSpacing: 0,
+            crossAxisSpacing: 0,
             childAspectRatio: 1.2,
             children: [
               for (final e in EmojiData.groups[gi])

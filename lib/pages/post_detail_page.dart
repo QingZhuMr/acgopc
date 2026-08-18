@@ -1,21 +1,26 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
 import 'package:silky_scroll/silky_scroll.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../core/api_client.dart';
 import '../core/app_config.dart';
 import '../core/app_theme.dart';
+import '../widgets/bubble_menu.dart';
+import '../widgets/cached_avatar.dart';
 import '../widgets/notify.dart';
 import '../widgets/pick_images.dart';
 import '../widgets/sticker_panel.dart';
+import '../utils/image_download.dart';
+import '../utils/image_transcoder.dart';
 import '../utils/net_image.dart';
 import '../utils/time_format.dart';
+import '../utils/text_sanitize.dart';
 import '../widgets/report_dialog.dart';
+import '../widgets/text_input_menu.dart';
 
 /// 帖子详情页（广场动态内容页，参考小红书 PC 端）
 ///
@@ -103,7 +108,11 @@ class _PostDetailPageState extends State<PostDetailPage> {
   final FocusNode _inputFocus = FocusNode();
   _ReplyTarget? _replyTarget;
   bool _sending = false;
-  bool _showPanel = false; // emoji 表情面板开关
+  bool _showPanel = false; // emoji 表情气泡是否打开（图标高亮联动）
+
+  /// emoji 表情气泡 GlobalKey：点击 emoji 后自动收起
+  final GlobalKey<BubbleMenuState> _emojiMenuKey =
+      GlobalKey<BubbleMenuState>();
   // 评论待发图片（字节 + 文件名 + 本地预览）
   final List<_PendingImage> _pendingImages = [];
 
@@ -335,33 +344,71 @@ class _PostDetailPageState extends State<PostDetailPage> {
     _inputCtrl.clear();
   }
 
-  /// 帖子级点赞 / 取消点赞（切换）
+  /// 帖子级点赞 / 取消点赞（切换）：先本地乐观渲染，接口失败再回滚并提示
   Future<void> _togglePostLike() async {
+    if (!mounted) return;
+    final prevLiked = _postLiked;
+    final prevCount = _postLikeCount;
+    // 乐观更新：立即切换状态与数字，不等接口返回，提升点击响应
+    setState(() {
+      _postLiked = !prevLiked;
+      _postLikeCount = prevCount + (_postLiked ? 1 : -1);
+    });
     try {
       final resp = await ApiClient.instance.togglePostLike(postId: widget.postId);
       final json = ApiClient.safeJsonDecode(resp.body);
       if (json['code'] == 0 && mounted) {
         setState(() {
-          _postLiked = (json['data']?['is_liked'] as bool?) ?? !_postLiked;
-          _postLikeCount = (json['data']?['like_count'] as num?)?.toInt() ?? _postLikeCount;
+          _postLiked = (json['data']?['is_liked'] as bool?) ?? _postLiked;
+          _postLikeCount =
+              (json['data']?['like_count'] as num?)?.toInt() ?? _postLikeCount;
         });
+      } else {
+        throw Exception('点赞失败');
       }
-    } catch (_) {}
+    } catch (_) {
+      if (!mounted) return;
+      // 失败回滚并提示
+      setState(() {
+        _postLiked = prevLiked;
+        _postLikeCount = prevCount;
+      });
+      NotifyStack.warning('点赞失败，请稍后重试', title: '提示');
+    }
   }
 
-  /// 帖子级收藏 / 取消收藏（切换，★ 星标）
+  /// 帖子级收藏 / 取消收藏（切换，★ 星标）：先本地乐观渲染，接口失败再回滚并提示
   Future<void> _togglePostFavorite() async {
+    if (!mounted) return;
+    final prevFavorited = _postFavorited;
+    final prevCount = _postFavoriteCount;
+    // 乐观更新：立即切换状态与数字，不等接口返回，提升点击响应
+    setState(() {
+      _postFavorited = !prevFavorited;
+      _postFavoriteCount = prevCount + (_postFavorited ? 1 : -1);
+    });
     try {
-      final resp = await ApiClient.instance.togglePostFavorite(postId: widget.postId);
+      final resp =
+          await ApiClient.instance.togglePostFavorite(postId: widget.postId);
       final json = ApiClient.safeJsonDecode(resp.body);
       if (json['code'] == 0 && mounted) {
         setState(() {
-          _postFavorited = (json['data']?['is_favorited'] as bool?) ?? !_postFavorited;
+          _postFavorited = (json['data']?['is_favorited'] as bool?) ?? _postFavorited;
           _postFavoriteCount =
               (json['data']?['favorite_count'] as num?)?.toInt() ?? _postFavoriteCount;
         });
+      } else {
+        throw Exception('收藏失败');
       }
-    } catch (_) {}
+    } catch (_) {
+      if (!mounted) return;
+      // 失败回滚并提示
+      setState(() {
+        _postFavorited = prevFavorited;
+        _postFavoriteCount = prevCount;
+      });
+      NotifyStack.warning('收藏失败，请稍后重试', title: '提示');
+    }
   }
 
   /// 评论点赞 / 取消点赞（切换），[setComment] 用新数据更新列表中的该评论
@@ -540,10 +587,16 @@ class _PostDetailPageState extends State<PostDetailPage> {
       NotifyStack.warning('图片超过 10MB，请压缩后上传', title: '提示');
       return;
     }
-    final data = img.bytes;
-    final name = img.name.isNotEmpty
-        ? img.name
-        : 'comment_${DateTime.now().millisecondsSinceEpoch}.png';
+    // 客户端统一转码：webp/png/bmp → jpg；GIF 保留动画
+    final t = await ImageTranscoder.toJpeg(bytes: img.bytes, name: img.name);
+    if (t == null) {
+      if (mounted) NotifyStack.warning('图片格式不支持', title: '提示');
+      return;
+    }
+    final data = t.bytes;
+    final name = t.name.isNotEmpty
+        ? t.name
+        : 'comment_${DateTime.now().millisecondsSinceEpoch}.jpg';
     // 重新选择覆盖之前的图片
     setState(() {
       _pendingImages.clear();
@@ -931,30 +984,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
       children: [
         // 评论区（SilkyListView 全宽，滚动条贴最右；内容项最大宽度受限居中）
         Expanded(child: _buildCommentList(b, panelW)),
-        // emoji 表情面板（紧贴底部输入框，带出现/收起动画）
-        AnimatedSize(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeInOut,
-          alignment: Alignment.topCenter,
-          child: _showPanel
-              ? Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                  child: EmojiPanel(
-                    onEmoji: (e) {
-                      final idx = _inputCtrl.selection.baseOffset;
-                      final text = _inputCtrl.text;
-                      final newText = idx >= 0 && idx <= text.length
-                          ? text.replaceRange(idx, idx, e)
-                          : text + e;
-                      _inputCtrl.text = newText;
-                      _inputCtrl.selection = TextSelection.collapsed(
-                          offset: (idx >= 0 ? idx : text.length) + e.length);
-                      _inputFocus.requestFocus();
-                    },
-                  ),
-                )
-              : const SizedBox.shrink(),
-        ),
+        // emoji 表情面板已改为表情按钮右上弹 BubbleMenu 气泡（见 _buildExpandedInput）
         // 底部输入框（分割线 + 内容自适应；增高时向上增长，评论区 Expanded 自动让位）
         _buildInputBar(b, panelW),
       ],
@@ -1192,6 +1222,9 @@ class _PostDetailPageState extends State<PostDetailPage> {
             ? const SizedBox.shrink()
             : SelectableText.rich(
                 _buildRichText(b, content, stickerSize: 64),
+                // 禁用系统右键菜单：复制已合并进统一气泡菜单，避免双弹窗
+                contextMenuBuilder: (context, editableTextState) =>
+                    const SizedBox.shrink(),
                 // 本人蓝底气泡：选中背景用黑色（默认蓝选中在蓝底上看不清）
                 selectionColor: isMine ? Colors.black : null,
                 style: TextStyle(
@@ -1203,6 +1236,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
               ),
         timeText: formatTimeWithLocation(createText, location: location),
         hasLike: false,
+        copyText: content,
         // 点击主贴气泡：拉起评论（展开底部输入框聚焦）
         onReply: _expandInput,
         onDelete: isMine ? _deletePost : null,
@@ -1349,30 +1383,37 @@ class _PostDetailPageState extends State<PostDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-        TextField(
+        TextInputBubbleMenu(
           controller: _inputCtrl,
-          focusNode: _inputFocus,
-          maxLength: 2000, // 2000 字限制
-          minLines: 2,
-          maxLines: 6, // 超过 6 行内部滚动，不再增高
-          style: TextStyle(fontSize: 13, color: textColor(b), height: 1.5),
-          decoration: InputDecoration(
-            hintText: _replyTarget != null
-                ? '@${_replyTarget!.replyToName}'
-                : '说点什么...',
-            hintStyle: TextStyle(fontSize: 13, color: textFaintColor(b)),
-            isDense: true,
-            counterText: '',
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            filled: true,
-            fillColor: bgHoverColor(b),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(kRadiusBtn),
-              borderSide: BorderSide.none,
+          child: TextField(
+            controller: _inputCtrl,
+            focusNode: _inputFocus,
+            maxLength: 2000, // 2000 字限制
+            minLines: 2,
+            maxLines: 6, // 超过 6 行内部滚动，不再增高
+            // 禁用系统右键菜单（统一用气泡方案）
+            contextMenuBuilder: (_, __) => const SizedBox.shrink(),
+            // 过滤粘贴/输入的非法 UTF-16 代理项（防渲染崩溃）
+            inputFormatters: const [Utf16SanitizeTextInputFormatter()],
+            style: TextStyle(fontSize: 13, color: textColor(b), height: 1.5),
+            decoration: InputDecoration(
+              hintText: _replyTarget != null
+                  ? '@${_replyTarget!.replyToName}'
+                  : '说点什么...',
+              hintStyle: TextStyle(fontSize: 13, color: textFaintColor(b)),
+              isDense: true,
+              counterText: '',
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              filled: true,
+              fillColor: bgHoverColor(b),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(kRadiusBtn),
+                borderSide: BorderSide.none,
+              ),
             ),
+            onSubmitted: (_) => _send(),
           ),
-          onSubmitted: (_) => _send(),
         ),
         // 已选图片预览行（评论框与表情按钮之间）
         if (_pendingImages.isNotEmpty)
@@ -1436,18 +1477,47 @@ class _PostDetailPageState extends State<PostDetailPage> {
               icon: const Icon(Icons.image_outlined, size: 20),
               color: textMutedColor(b),
             ),
-            // emoji 表情按钮
-            IconButton(
-              onPressed: () {
-                setState(() => _showPanel = !_showPanel);
-                _inputFocus.requestFocus();
+            // emoji 表情按钮（BubbleMenu 气泡弹出面板，仅 emoji 无表情包；
+            // 点击 emoji 插入后自动收起，微信式）
+            BubbleMenu(
+              key: _emojiMenuKey,
+              width: 340,
+              // emoji 面板高 190 + 气泡三角/内边距占位
+              panelHeight: 209,
+              content: EmojiPanel(
+                transparent: true,
+                onEmoji: (e) {
+                  final idx = _inputCtrl.selection.baseOffset;
+                  final text = _inputCtrl.text;
+                  final newText = idx >= 0 && idx <= text.length
+                      ? text.replaceRange(idx, idx, e)
+                      : text + e;
+                  _inputCtrl.value = TextEditingValue(
+                    text: newText,
+                    selection: TextSelection.collapsed(
+                        offset: (idx >= 0 ? idx : text.length) + e.length),
+                  );
+                  _inputFocus.requestFocus();
+                  _emojiMenuKey.currentState?.close();
+                },
+              ),
+              onOpenChange: (open) {
+                if (_showPanel != open) {
+                  setState(() => _showPanel = open);
+                }
+                if (open) _inputFocus.requestFocus();
               },
-              tooltip: '表情',
-              visualDensity: VisualDensity.compact,
-              icon: Icon(
-                _showPanel ? Icons.emoji_emotions : Icons.emoji_emotions_outlined,
-                size: 20,
-                color: _showPanel ? kPrimary : textMutedColor(b),
+              child: IconButton(
+                onPressed: () {},
+                tooltip: '表情',
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  _showPanel
+                      ? Icons.emoji_emotions
+                      : Icons.emoji_emotions_outlined,
+                  size: 20,
+                  color: _showPanel ? kPrimary : textMutedColor(b),
+                ),
               ),
             ),
             const Spacer(),
@@ -1495,7 +1565,8 @@ class _PostDetailPageState extends State<PostDetailPage> {
 
   /// 构建富文本（帖子正文/评论不再渲染表情包，[sticker:id] 按原始标签文本显示）
   TextSpan _buildRichText(Brightness b, String text, {double stickerSize = 18}) {
-    return TextSpan(text: text);
+    // 渲染兜底：清洗非法 UTF-16 代理项（防 TextSpan 崩溃）
+    return TextSpan(text: sanitizeUtf16(text));
   }
 }
 
@@ -1585,6 +1656,9 @@ class _CommentItem extends StatelessWidget {
                     ? Colors.white
                     : (b == Brightness.light ? Colors.black : Colors.white),
               ),
+              // 禁用系统右键菜单：复制已合并进统一气泡菜单，避免双弹窗
+              contextMenuBuilder: (context, editableTextState) =>
+                  const SizedBox.shrink(),
               // 本人蓝底气泡：选中背景用黑色
               selectionColor: isMine ? Colors.black : null,
               style: TextStyle(
@@ -1602,6 +1676,7 @@ class _CommentItem extends StatelessWidget {
             hasLike: true,
             isLiked: isLiked,
             likeCount: likeCount,
+            copyText: content,
             onLike: onLike,
             onReply: onReply,
             onDelete: isMine
@@ -1745,6 +1820,9 @@ class _CommentItem extends StatelessWidget {
               ..._richSpans(b, content),
             ],
           ),
+          // 禁用系统右键菜单：复制已合并进统一气泡菜单，避免双弹窗
+          contextMenuBuilder: (context, editableTextState) =>
+              const SizedBox.shrink(),
           // 本人蓝底气泡：选中背景用黑色
           selectionColor: childMine ? Colors.black : null,
         ),
@@ -1755,6 +1833,7 @@ class _CommentItem extends StatelessWidget {
         hasLike: true,
         isLiked: isLiked,
         likeCount: likeCount,
+        copyText: content,
         onLike: () => onLikeChild(child),
         onReply: () => onReplyChild(child),
         onDelete: childMine
@@ -1805,7 +1884,8 @@ class _CommentItem extends StatelessWidget {
 
   /// 解析内容为富文本 spans（评论/楼中楼不再渲染表情包，[sticker:id] 按标签显示）
   List<InlineSpan> _richSpans(Brightness b, String text) {
-    return [TextSpan(text: text)];
+    // 渲染兜底：清洗非法 UTF-16 代理项（防 TextSpan 崩溃）
+    return [TextSpan(text: sanitizeUtf16(text))];
   }
 
   TextSpan _buildRichText(Brightness b, String text, {Color? color}) {
@@ -1975,10 +2055,13 @@ class _ChatBubble extends StatelessWidget {
   final VoidCallback? onDelete; // 自己
   final VoidCallback? onReport; // 他人
 
+  /// 右键菜单「复制」的文本内容（空则不显示复制项）。
+  /// 用于把 SelectableText 的系统右键复制菜单合并进统一气泡菜单
+  final String copyText;
+
   /// 点击头像/昵称 → 打开对方个人中心
   final VoidCallback? onUserTap;
   final double avatarSize;
-  final bool showNickname;
 
   /// 层级：0=顶层评论/主贴；1=楼中楼（用于气泡样式区分）
   final int level;
@@ -2006,9 +2089,9 @@ class _ChatBubble extends StatelessWidget {
     this.onLike,
     this.onDelete,
     this.onReport,
+    this.copyText = '',
     this.onUserTap,
     this.avatarSize = 32,
-    this.showNickname = true,
     this.level = 0,
     this.showAvatar = true,
     this.nicknameAbove = false,
@@ -2037,16 +2120,28 @@ class _ChatBubble extends StatelessWidget {
       ),
     );
     // 气泡：点击回复（带按压缩放动画）；右键弹删除/举报菜单（本人=删除，他人=举报）
-    final bubble = _PressableBubble(
-      onTap: onReply,
-      onSecondaryTap: (pos) => _showBubbleMenu(
-        context,
-        pos,
-        isMine: isMine,
-        onDelete: onDelete,
-        onReport: onReport,
-      ),
-      child: _ChatBubbleBody(
+    // 右键菜单统一用全局 BubbleMenu 气泡（内容宽度一致居中、宽窄不一左对齐）
+    // 「复制」项合并了 SelectableText 的系统右键菜单（系统菜单已禁用，避免双弹窗）
+    final bubble = BubbleMenu(
+      triggerOnRightClick: true,
+      items: [
+        if (copyText.isNotEmpty)
+          BubbleMenuItem(
+            label: '复制',
+            icon: Icons.copy_rounded,
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: copyText));
+              NotifyStack.success('已复制', title: '提示');
+            },
+          ),
+        if (isMine)
+          BubbleMenuItem.delete('删除', onTap: onDelete)
+        else
+          BubbleMenuItem.report('举报', onTap: onReport),
+      ],
+      child: _PressableBubble(
+        onTap: onReply,
+        child: _ChatBubbleBody(
         isMine: isMine,
         nickname: nickname,
         contentWidget: contentWidget,
@@ -2060,9 +2155,10 @@ class _ChatBubble extends StatelessWidget {
         onReport: onReport,
         onUserTap: onUserTap,
         // 昵称在气泡上方时，气泡内不显示昵称；头像合并（showAvatar=false）时也隐藏
-        showNickname: showNickname && showAvatar && !nicknameAbove,
+        showNickname: showAvatar && !nicknameAbove,
         avatarSize: avatarSize,
         level: level,
+        ),
       ),
     );
 
@@ -2160,66 +2256,17 @@ class _ChatBubble extends StatelessWidget {
     return mainRow;
   }
 
-  /// 右键气泡弹出菜单：本人=删除，他人=举报
-  void _showBubbleMenu(
-    BuildContext context,
-    Offset globalPosition, {
-    required bool isMine,
-    VoidCallback? onDelete,
-    VoidCallback? onReport,
-  }) {
-    final b = Theme.of(context).brightness;
-    final items = <PopupMenuEntry<VoidCallback?>>[
-      if (isMine)
-        PopupMenuItem<VoidCallback?>(
-          value: onDelete,
-          height: 36,
-          child: const Row(
-            children: [
-              Icon(Icons.delete_outline_rounded, size: 18, color: kDanger),
-              SizedBox(width: 10),
-              Text('删除', style: TextStyle(color: kDanger, fontSize: 13)),
-            ],
-          ),
-        )
-      else
-        PopupMenuItem<VoidCallback?>(
-          value: onReport,
-          height: 36,
-          child: const Row(
-            children: [
-              Icon(Icons.flag_outlined, size: 18),
-              SizedBox(width: 10),
-              Text('举报', style: TextStyle(fontSize: 13)),
-            ],
-          ),
-        ),
-    ];
-    showMenu<VoidCallback?>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        globalPosition.dx,
-        globalPosition.dy,
-        globalPosition.dx,
-        globalPosition.dy,
-      ),
-      color: bgColor(b),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(kRadiusBtn)),
-      items: items,
-    ).then((cb) => cb?.call());
-  }
 }
 
-/// 可按压气泡：按下时轻微缩放动画，左键点击触发回复，右键触发菜单
+/// 可按压气泡：按下时轻微缩放动画，左键点击触发回复；
+/// 右键菜单由外层 BubbleMenu 统一处理（见调用处）
 class _PressableBubble extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
-  final void Function(Offset globalPosition) onSecondaryTap;
 
   const _PressableBubble({
     required this.child,
     required this.onTap,
-    required this.onSecondaryTap,
   });
 
   @override
@@ -2244,7 +2291,6 @@ class _PressableBubbleState extends State<_PressableBubble> {
           onTapUp: (_) => setState(() => _pressed = false),
           onTapCancel: () => setState(() => _pressed = false),
           onTap: widget.onTap,
-          onSecondaryTapDown: (d) => widget.onSecondaryTap(d.globalPosition),
           child: widget.child,
         ),
       ),
@@ -2435,15 +2481,11 @@ class _AvatarBox extends StatelessWidget {
       ),
     );
     if (url == null || url!.isEmpty) return placeholder;
-    return ClipOval(
-      child: Image.network(
-        url!,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        loadingBuilder: (c, child, progress) => progress == null ? child : placeholder,
-        errorBuilder: (c, e, s) => placeholder,
-      ),
+    // 头像磁盘缓存（作者/评论者不换头像不重复加载）
+    return CachedAvatar(
+      url: url!,
+      size: size,
+      fallbackText: nickname,
     );
   }
 }
@@ -2572,59 +2614,6 @@ class _ImagePreviewDialogState extends State<_ImagePreviewDialog> {
       NotifyStack.warning('下载失败', title: '提示');
     }
   }
-}
-
-/// 下载图片字节到 Windows 默认下载目录（用户主目录\Downloads）
-///
-/// 返回保存后的完整路径；失败返回 null。目录不存在则自动创建。
-Future<String?> downloadImageToDownloads(String url) async {
-  try {
-    final resp = await http.get(Uri.parse(url));
-    if (resp.statusCode != 200) return null;
-    final bytes = resp.bodyBytes;
-    if (bytes.isEmpty) return null;
-
-    // 解析默认下载目录
-    final home = Platform.environment['USERPROFILE'] ??
-        Platform.environment['HOME'] ??
-        Directory.current.path;
-    var downloads = '$home${Platform.pathSeparator}Downloads';
-    if (!Directory(downloads).existsSync()) {
-      // OneDrive 重定向等场景兜底：用用户主目录
-      downloads = home;
-    }
-    if (!Directory(downloads).existsSync()) {
-      try {
-        Directory(downloads).createSync(recursive: true);
-      } catch (_) {
-        return null;
-      }
-    }
-
-    // 生成唯一文件名：原文件名 + 时间戳，避免覆盖
-    final name = _fileNameFromUrl(url);
-    final base = name.contains('.') ? name : '$name.png';
-    final dot = base.lastIndexOf('.');
-    final stem = dot > 0 ? base.substring(0, dot) : base;
-    final ext = dot > 0 ? base.substring(dot) : '';
-    final file = File('$downloads${Platform.pathSeparator}${stem}_${DateTime.now().millisecondsSinceEpoch}$ext');
-    await file.writeAsBytes(bytes, flush: true);
-    return file.path;
-  } catch (_) {
-    return null;
-  }
-}
-
-/// 从 URL 提取文件名（含扩展名），无扩展名返回默认名
-String _fileNameFromUrl(String url) {
-  try {
-    final path = Uri.parse(url).pathSegments;
-    if (path.isNotEmpty) {
-      final last = path.last;
-      if (last.isNotEmpty) return last;
-    }
-  } catch (_) {}
-  return 'image.png';
 }
 
 /// 图片轮播左右切换箭头（小红书风格：半透明黑底浮动按钮）

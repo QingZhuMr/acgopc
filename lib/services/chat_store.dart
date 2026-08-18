@@ -1,7 +1,13 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../core/app_config.dart';
+import '../utils/text_sanitize.dart';
+import 'secure_storage.dart';
 
 /// 聊天本地存储（SQLite）
 ///
@@ -16,17 +22,88 @@ class ChatStore {
 
   Database? _db;
 
+  /// 当前登录用户 id（0=未登录）；聊天本地库按账号隔离
+  int _uid = 0;
+
+  /// 当前已打开连接所属用户 id（用于判断连接是否匹配当前账号）
+  int _dbUid = 0;
+
+  /// 未读数变化通知（左侧导航消息角标 / 会话列表刷新监听）。
+  /// 每次未读数可能变化时 +1，监听方自行重新查询汇总。
+  final ValueNotifier<int> chatUnreadTick = ValueNotifier<int>(0);
+
+  void _notifyUnreadChanged() => chatUnreadTick.value++;
+
+  /// 登录后调用：切换聊天本地库到该账号专属文件（`acgo_chat_<uid>.db`）
+  ///
+  /// 切换账号后各账号会话/消息互不可见；首次登录某账号时自动从旧公共库
+  /// `acgo_chat.db` 一次性迁移该账号的数据（消息/密钥/隐藏/删除标记）。
+  Future<void> openForUser(int uid) async {
+    if (uid <= 0 || uid == _uid) return;
+    final old = _db;
+    _db = null;
+    _dbUid = 0;
+    _uid = uid;
+    _deletedLoaded = false;
+    if (old != null) {
+      try {
+        await old.close();
+      } catch (_) {}
+    }
+  }
+
+  /// 退出登录调用：关闭聊天库连接（下次登录重新按新账号打开）
+  Future<void> closeForUser() async {
+    final old = _db;
+    _db = null;
+    _dbUid = 0;
+    _uid = 0;
+    _deletedLoaded = false;
+    if (old != null) {
+      try {
+        await old.close();
+      } catch (_) {}
+    }
+  }
+
   Future<Database> get _database async {
-    if (_db != null) return _db!;
+    // 连接与当前账号匹配 → 直接复用
+    if (_db != null && _dbUid == _uid) return _db!;
+    // 关闭旧连接（可能属于上一个账号）
+    final old = _db;
+    _db = null;
+    _dbUid = 0;
+    if (old != null) {
+      try {
+        await old.close();
+      } catch (_) {}
+    }
     // 桌面端（Windows/macOS/Linux）用 ffi 实现；移动端用原生
     if (Platform.isWindows || Platform.isLinux) {
       sqfliteFfiInit();
       databaseFactory = databaseFactoryFfi;
     }
+    // 未登录：回退公共库（正常流程登录后即切专属库，此处仅兜底）
+    if (_uid <= 0) {
+      final db = await _openDb('acgo_chat.db');
+      _db = db;
+      _dbUid = 0;
+      return db;
+    }
+    // 首次使用该账号：从旧公共库一次性迁移数据（内部打开新库并缓存）
+    await _migrateFromLegacyIfNeeded(_uid);
+    if (_db != null && _dbUid == _uid) return _db!;
+    final db = await _openDb('acgo_chat_$_uid.db');
+    _db = db;
+    _dbUid = _uid;
+    return db;
+  }
+
+  Future<Database> _openDb(String fileName) async {
     final dir = await getDatabasesPath();
-    final db = await openDatabase(
-      p.join(dir, 'acgo_chat.db'),
-      version: 2,
+    return openDatabase(
+      p.join(dir, fileName),
+      version: 8,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE local_chat_message (
@@ -44,6 +121,9 @@ class ChatStore {
             ephemeral_pub TEXT DEFAULT '',
             signature TEXT DEFAULT '',
             send_status INTEGER DEFAULT 1,
+            recalled INTEGER DEFAULT 0,
+            image_local_path TEXT DEFAULT '',
+            read_status INTEGER DEFAULT 0,
             create_time INTEGER NOT NULL
           )
         ''');
@@ -70,8 +150,79 @@ class ChatStore {
             update_time INTEGER DEFAULT 0
           )
         ''');
+        // 隐藏会话（删除但保留聊天记录，重新收发消息后自动恢复可见）
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS hidden_conversation (
+            chat_id TEXT PRIMARY KEY
+          )
+        ''');
+        // 本地已删除消息标记（多选删除/单条删除：仅本设备删除，
+        // 拉历史/断线同步时按 msg_id 过滤，防止服务器缓存中消息"复活"）
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS local_deleted_msg (
+            msg_id INTEGER PRIMARY KEY,
+            delete_time INTEGER DEFAULT 0
+          )
+        ''');
       },
       onUpgrade: (db, oldV, newV) async {
+        // v7 → v8：本地已删除消息标记表（多选删除防"复活"）
+        if (oldV < 8) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS local_deleted_msg (
+              msg_id INTEGER PRIMARY KEY,
+              delete_time INTEGER DEFAULT 0
+            )
+          ''');
+        }
+        // v6 → v7：我发出的消息的已读状态列（对方是否已读）
+        if (oldV < 7) {
+          final cols7 =
+              await db.rawQuery('PRAGMA table_info(local_chat_message)');
+          final names7 = cols7.map((c) => c['name']).toSet();
+          if (!names7.contains('read_status')) {
+            await db.execute(
+                'ALTER TABLE local_chat_message ADD COLUMN read_status INTEGER DEFAULT 0');
+          }
+        }
+        // v5 → v6：图片消息本地缓存路径列
+        if (oldV < 6) {
+          final cols6 =
+              await db.rawQuery('PRAGMA table_info(local_chat_message)');
+          final names6 = cols6.map((c) => c['name']).toSet();
+          if (!names6.contains('image_local_path')) {
+            await db.execute(
+                'ALTER TABLE local_chat_message ADD COLUMN image_local_path TEXT DEFAULT \'\'');
+          }
+        }
+        // v4 → v5：新增消息类型列（1文本 2图片）
+        if (oldV < 5) {
+          final cols5 =
+              await db.rawQuery('PRAGMA table_info(local_chat_message)');
+          final names5 = cols5.map((c) => c['name']).toSet();
+          if (!names5.contains('msg_type')) {
+            await db.execute(
+                'ALTER TABLE local_chat_message ADD COLUMN msg_type INTEGER DEFAULT 1');
+          }
+        }
+        // v3 → v4：新增撤回标记列
+        if (oldV < 4) {
+          final cols =
+              await db.rawQuery('PRAGMA table_info(local_chat_message)');
+          final names = cols.map((c) => c['name']).toSet();
+          if (!names.contains('recalled')) {
+            await db.execute(
+                'ALTER TABLE local_chat_message ADD COLUMN recalled INTEGER DEFAULT 0');
+          }
+        }
+        // v2 → v3：新增隐藏会话表（删除会话但保留记录）
+        if (oldV < 3) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS hidden_conversation (
+              chat_id TEXT PRIMARY KEY
+            )
+          ''');
+        }
         // v1 → v2：新增 seq/signature 列 + 唯一索引 + 会话表
         if (oldV < 2) {
           final cols = await db.rawQuery('PRAGMA table_info(local_chat_message)');
@@ -102,15 +253,87 @@ class ChatStore {
               update_time INTEGER DEFAULT 0
             )
           ''');
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS hidden_conversation (
+              chat_id TEXT PRIMARY KEY
+            )
+          ''');
         }
       },
     );
-    _db = db;
-    return db;
+  }
+
+  /// 首次登录该账号时，从旧公共库 `acgo_chat.db` 一次性迁移该账号的本地数据。
+  ///
+  /// 旧库无 owner 列，按 `sender_id/receiver_id` 归属消息、按 user_id 归属密钥；
+  /// 会话表不迁移（消息迁移后由 `syncConversationsFromMessages` 自动聚合重建）；
+  /// 幂等：目标库已存在则跳过。迁移失败不阻塞登录（最多丢旧库数据）。
+  Future<void> _migrateFromLegacyIfNeeded(int uid) async {
+    try {
+      final dir = await getDatabasesPath();
+      final legacyPath = p.join(dir, 'acgo_chat.db');
+      final userPath = p.join(dir, 'acgo_chat_$uid.db');
+      if (!File(legacyPath).existsSync()) return;
+      if (File(userPath).existsSync()) return;
+      // 打开旧库（只读）
+      final legacy = await openDatabase(legacyPath, readOnly: true);
+      try {
+        // 打开新库并缓存（不走 getter 避免递归）
+        final db = await _openDb('acgo_chat_$uid.db');
+        _db = db;
+        _dbUid = uid;
+        // 密钥（该账号的 E2EE 密钥对）
+        final keys = await legacy.query(
+          'local_key_store',
+          where: 'user_id = ?',
+          whereArgs: [uid],
+        );
+        for (final k in keys) {
+          await db.insert('local_key_store', k,
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+        // 消息（sender 或 receiver 是该账号的）
+        final msgs = await legacy.query(
+          'local_chat_message',
+          where: 'sender_id = ? OR receiver_id = ?',
+          whereArgs: [uid, uid],
+        );
+        for (final m in msgs) {
+          await db.insert('local_chat_message', m,
+              conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+        // 隐藏会话（仅迁该账号有聊天记录的会话）
+        final hiddenRows = await legacy.query('hidden_conversation');
+        final migratedChatIds = {
+          for (final m in msgs) m['chat_id']?.toString() ?? ''
+        }..remove('');
+        for (final h in hiddenRows) {
+          final cid = h['chat_id']?.toString() ?? '';
+          if (cid.isNotEmpty && migratedChatIds.contains(cid)) {
+            await db.insert('hidden_conversation', {'chat_id': cid},
+                conflictAlgorithm: ConflictAlgorithm.ignore);
+          }
+        }
+        // 已删除消息标记（msg_id 全局唯一，全量迁移）
+        try {
+          final deleted = await legacy.query('local_deleted_msg');
+          for (final d in deleted) {
+            await db.insert('local_deleted_msg', d,
+                conflictAlgorithm: ConflictAlgorithm.ignore);
+          }
+        } catch (_) {}
+      } finally {
+        await legacy.close();
+      }
+    } catch (_) {
+      // 迁移失败不阻塞登录（最多丢旧库数据，新库正常用）
+    }
   }
 
   /// 保存本地消息（幂等：按 client_msg_id UNIQUE 去重）
-  Future<void> upsertMessage({
+  ///
+  /// 返回 true 表示本次为新插入（离线通知等场景据此判断是否首次收到）。
+  Future<bool> upsertMessage({
     required String chatId,
     required int msgId,
     required String clientMsgId,
@@ -125,6 +348,7 @@ class ChatStore {
     String signature = '',
     required int sendStatus, // 0发送中 1已发送 2失败
     required int createTime,
+    String imageLocalPath = '',
   }) async {
     final db = await _database;
     if (clientMsgId.isEmpty) {
@@ -148,13 +372,17 @@ class ChatStore {
       if (plaintext.isNotEmpty && (exists.first['plaintext'] as String? ?? '').isEmpty) {
         update['plaintext'] = plaintext;
       }
+      // 图片本地缓存路径回填（下载完成后写入，不覆盖已有路径）
+      if (imageLocalPath.isNotEmpty) {
+        update['image_local_path'] = imageLocalPath;
+      }
       await db.update(
         'local_chat_message',
         update,
         where: 'id = ?',
         whereArgs: [exists.first['id']],
       );
-      return;
+      return false;
     }
     await db.insert('local_chat_message', {
       'chat_id': chatId,
@@ -171,16 +399,44 @@ class ChatStore {
       'signature': signature,
       'send_status': sendStatus,
       'create_time': createTime,
+      'image_local_path': imageLocalPath,
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    return true;
   }
 
-  /// 按 msg_id 更新发送状态（发送成功后）
-  Future<void> updateSendStatus(
-      {required String clientMsgId, required int sendStatus}) async {
+  /// 图片缓存回填通知（消息列表监听后刷新，展示本地图片）
+  static final ValueNotifier<int> imageCacheTick = ValueNotifier<int>(0);
+
+  /// 图片消息本地缓存路径回填（下载完成后调用）
+  Future<void> updateImageLocalPath({
+    required String clientMsgId,
+    required String path,
+  }) async {
     final db = await _database;
+    final res = await db.update(
+      'local_chat_message',
+      {'image_local_path': path},
+      where: 'client_msg_id = ? AND image_local_path = \'\'',
+      whereArgs: [clientMsgId],
+    );
+    if (res > 0) imageCacheTick.value++;
+  }
+
+  /// 更新发送状态（发送成功后）
+  ///
+  /// [msgId]：发送成功时携带服务端消息 id，一并写回本地行。
+  /// 否则本地行 msg_id 恒为 0，右键「回复/撤回」（判定 msgId > 0）不可用，
+  /// 必须重新拉历史才能恢复。
+  Future<void> updateSendStatus(
+      {required String clientMsgId,
+      required int sendStatus,
+      int? msgId}) async {
+    final db = await _database;
+    final fields = <String, Object?>{'send_status': sendStatus};
+    if (msgId != null && msgId > 0) fields['msg_id'] = msgId;
     await db.update(
       'local_chat_message',
-      {'send_status': sendStatus},
+      fields,
       where: 'client_msg_id = ?',
       whereArgs: [clientMsgId],
     );
@@ -209,6 +465,62 @@ class ChatStore {
     return rows;
   }
 
+  /// 全量搜索本地聊天记录（明文 LIKE，跨会话），按时间倒序
+  ///
+  /// 仅搜索纯文本消息（msg_type=1）且未撤回的，避免图片/表情消息的
+  /// 加密元数据 JSON 与撤回占位文案干扰搜索结果。
+  Future<List<Map<String, dynamic>>> searchMessages(String keyword,
+      {int limit = 50}) async {
+    final db = await _database;
+    final kw = keyword.trim();
+    if (kw.isEmpty) return [];
+    // 转义 LIKE 通配符，避免用户输入 % _ 干扰
+    final escaped = kw
+        .replaceAll(r'\', r'\\')
+        .replaceAll('%', r'\%')
+        .replaceAll('_', r'\_');
+    return db.query(
+      'local_chat_message',
+      where: "msg_type = 1 AND recalled = 0 AND plaintext LIKE ? ESCAPE '\\'",
+      whereArgs: ['%$escaped%'],
+      orderBy: 'create_time DESC',
+      limit: limit,
+    );
+  }
+
+  /// 发送成功后用服务器 create_time 覆盖本地时间（撤回时限判定以服务器时间为准）
+  Future<void> updateServerCreateTime({
+    required String clientMsgId,
+    required int createTime,
+  }) async {
+    final db = await _database;
+    await db.update(
+      'local_chat_message',
+      {'create_time': createTime},
+      where: 'client_msg_id = ?',
+      whereArgs: [clientMsgId],
+    );
+  }
+
+  /// 本地最大的服务器消息 id（断线增量同步的游标）
+  Future<int> getMaxMsgId() async {
+    final db = await _database;
+    final rows = await db.rawQuery(
+        'SELECT MAX(msg_id) AS m FROM local_chat_message');
+    return (rows.isNotEmpty ? rows.first['m'] as num? : null)?.toInt() ?? 0;
+  }
+
+  /// 标记消息已撤回（本地展示占位文案，原文保留在库里）
+  Future<void> markRecalled(int msgId) async {
+    final db = await _database;
+    await db.update(
+      'local_chat_message',
+      {'recalled': 1},
+      where: 'msg_id = ?',
+      whereArgs: [msgId],
+    );
+  }
+
   /// 查询待重发消息（send_status=2 失败，或 =0 发送中超时未确认），按时间升序
   Future<List<Map<String, dynamic>>> getPendingRetry(int limit) async {
     final db = await _database;
@@ -233,6 +545,9 @@ class ChatStore {
     int unreadDelta = 0,
   }) async {
     final db = await _database;
+    // 有新消息即恢复可见（删除隐藏的会话重新收发消息后再次出现）
+    await db.delete('hidden_conversation',
+        where: 'chat_id = ?', whereArgs: [chatId]);
     final exists = await db.query(
       'local_conversation',
       where: 'chat_id = ?',
@@ -267,6 +582,232 @@ class ChatStore {
         whereArgs: [chatId],
       );
     }
+    // 未读数变化才通知（sync 批量重建 unreadDelta=0 不打扰角标）
+    if (unreadDelta != 0) _notifyUnreadChanged();
+  }
+
+  /// 从本地聊天记录聚合会话（微信原理：会话 = 本地聊天记录，无论收发）
+  ///
+  /// 以 [local_chat_message] 为唯一真相源：为每个 chat_id 取最新一条消息
+  /// （含我发出的）更新会话摘要，并清理已无任何聊天记录的会话。
+  /// [myUid] 用于推导对端：消息 sender 是我则 peer=receiver，否则 peer=sender。
+  Future<void> syncConversationsFromMessages(int myUid) async {
+    final db = await _database;
+    // 用户主动隐藏的会话：聚合时跳过（删除但保留记录，不再自动出现）
+    final hiddenRows = await db.query('hidden_conversation');
+    final hidden = {
+      for (final r in hiddenRows) r['chat_id']?.toString() ?? ''
+    }..remove('');
+    // 所有仍有聊天记录的会话（用于清理无记录会话）
+    final chatRows = await db.rawQuery(
+        'SELECT DISTINCT chat_id FROM local_chat_message WHERE chat_id != \'\'');
+    final valid = {
+      for (final r in chatRows) r['chat_id']?.toString() ?? ''
+    }..remove('');
+    // 按时间倒序取最新消息（2000 条足够覆盖各会话最新摘要）
+    final rows = await db.query(
+      'local_chat_message',
+      orderBy: 'create_time DESC',
+      limit: 2000,
+    );
+    final seen = <String>{};
+    for (final m in rows) {
+      final chatId = m['chat_id']?.toString() ?? '';
+      if (chatId.isEmpty || !seen.add(chatId)) continue;
+      // 用户主动隐藏的会话跳过（不重建）
+      if (hidden.contains(chatId)) continue;
+      final senderId = (m['sender_id'] as num?)?.toInt() ?? 0;
+      final receiverId = (m['receiver_id'] as num?)?.toInt() ?? 0;
+      await upsertConversation(
+        chatId: chatId,
+        peerId: senderId == myUid ? receiverId : senderId,
+        peerNickname: '',
+        peerAvatar: '',
+        lastMsgText: ChatStore.conversationPreview(m),
+        lastMsgTime: (m['create_time'] as num?)?.toInt() ?? 0,
+        unreadDelta: 0,
+      );
+    }
+    // 清理：本地已无聊天记录的会话。
+    // 保留"点击好友预建的会话窗口"（有昵称/头像但暂无消息），
+    // 只清纯脏数据（无消息且无对端信息）。
+    final convRows = await db.query('local_conversation');
+    for (final c in convRows) {
+      final chatId = c['chat_id']?.toString() ?? '';
+      if (chatId.isEmpty || valid.contains(chatId)) continue;
+      final hasPeerInfo =
+          (c['peer_nickname']?.toString() ?? '').isNotEmpty ||
+              (c['peer_avatar']?.toString() ?? '').isNotEmpty;
+      if (hasPeerInfo) continue;
+      await db.delete(
+          'local_conversation', where: 'chat_id = ?', whereArgs: [chatId]);
+    }
+  }
+
+  /// 会话摘要预览文本：图片消息显示 [图片]、表情消息显示 [表情]，
+  /// 引用消息显示实际文本（不暴露加密 JSON 结构），不暴露原始 URL/JSON
+  ///
+  /// [row] 为 local_chat_message 行，至少含 msg_type / plaintext。
+  static String conversationPreview(Map<String, dynamic> row) {
+    final msgType = (row['msg_type'] as num?)?.toInt() ?? 1;
+    if (msgType == 2) return '[图片]';
+    if (msgType == 3) return '[表情]';
+    // 渲染兜底：清洗非法 UTF-16 代理项（防会话列表 Text 崩溃）
+    final text = sanitizeUtf16(row['plaintext']?.toString() ?? '');
+    // 表情消息（评论/聊天通用占位格式 [sticker:xx]）
+    if (RegExp(r'^\[sticker:.+\]$').hasMatch(text.trim())) {
+      return '[表情]';
+    }
+    // 引用消息：body 为 {"text":"...","reply_to":{...}}，摘要只取实际文本
+    if (text.startsWith('{')) {
+      try {
+        final j = jsonDecode(text);
+        if (j is Map && j['text'] is String && j['reply_to'] is Map) {
+          return j['text'] as String;
+        }
+      } catch (_) {}
+    }
+    return text;
+  }
+
+  /// 聊天图片本地缓存目录：**按账号隔离**（`chat_images/<uid>/`）。
+  /// 不同账号的图片缓存互不可见/不覆盖；[uid]<=0 用公共子目录兜底。
+  /// 老版本在无 uid 子目录下的旧文件仍可读（历史 image_local_path 存绝对路径）。
+  static String chatImageDirFor(int uid) {
+    final base = '${AppConfig.dataDir}${Platform.pathSeparator}chat_images';
+    final safeUid = uid > 0 ? uid : 0;
+    return '$base${Platform.pathSeparator}$safeUid';
+  }
+
+  /// 当前登录用户 id（聊天图片缓存目录按此隔离）
+  int get currentUid => _uid;
+
+  /// 删除本地上限 [paths] 内的图片缓存文件（存在才删）
+  static Future<void> deleteLocalImages(List<String> paths) async {
+    for (final p in paths) {
+      try {
+        if (p.isNotEmpty && File(p).existsSync()) {
+          await File(p).delete();
+        }
+      } catch (_) {}
+    }
+  }
+
+  /// 清空会话（"清空聊天记录"）：删除该会话所有本地消息、会话行、隐藏标记与本地图片缓存
+  Future<void> clearChatMessages(String chatId) async {
+    final db = await _database;
+    final rows = await db.query(
+      'local_chat_message',
+      columns: ['image_local_path'],
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+    );
+    await ChatStore.deleteLocalImages([
+      for (final r in rows)
+        if ((r['image_local_path'] as String? ?? '').isNotEmpty)
+          r['image_local_path'] as String,
+    ]);
+    await db.delete('local_chat_message',
+        where: 'chat_id = ?', whereArgs: [chatId]);
+    await db.delete('hidden_conversation',
+        where: 'chat_id = ?', whereArgs: [chatId]);
+    await db.delete('local_conversation',
+        where: 'chat_id = ?', whereArgs: [chatId]);
+    _notifyUnreadChanged();
+  }
+
+  /// 本地已删除消息的服务器 msg_id 集合（内存缓存，防重复查询）
+  Set<int> _deletedMsgIds = {};
+  bool _deletedLoaded = false;
+
+  Future<void> _ensureDeletedLoaded() async {
+    if (_deletedLoaded) return;
+    final db = await _database;
+    final rows = await db.query('local_deleted_msg', columns: ['msg_id']);
+    _deletedMsgIds = {
+      for (final r in rows) (r['msg_id'] as num?)?.toInt() ?? 0
+    }..remove(0);
+    _deletedLoaded = true;
+  }
+
+  /// 该服务器消息 id 是否已在本地被删除（删除后拉历史/断线同步时过滤）
+  Future<bool> isMsgDeleted(int msgId) async {
+    if (msgId <= 0) return false;
+    await _ensureDeletedLoaded();
+    return _deletedMsgIds.contains(msgId);
+  }
+
+  /// 记录已删除消息的服务器 msg_id（防止服务器缓存中该消息"复活"）
+  Future<void> markLocallyDeleted(List<int> msgIds) async {
+    if (msgIds.isEmpty) return;
+    final db = await _database;
+    await _ensureDeletedLoaded();
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    for (final id in msgIds) {
+      if (id <= 0) continue;
+      _deletedMsgIds.add(id);
+      await db.insert(
+        'local_deleted_msg',
+        {'msg_id': id, 'delete_time': now},
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
+  }
+
+  /// 批量删除本地消息（多选删除，仅本设备生效）：
+  /// 记录服务器 msg_id（防拉历史"复活"）→ 删除消息行 → 清理本地图片缓存。
+  Future<void> deleteMessagesByLocalIds(List<int> ids) async {
+    if (ids.isEmpty) return;
+    final db = await _database;
+    final unique = ids.toSet().toList();
+    final ph = List.filled(unique.length, '?').join(',');
+    // 先收集服务器 msg_id（防复活）与图片缓存路径，再删行
+    final rows = await db.query(
+      'local_chat_message',
+      columns: ['msg_id', 'image_local_path'],
+      where: 'id IN ($ph)',
+      whereArgs: unique,
+    );
+    await markLocallyDeleted([
+      for (final r in rows) (r['msg_id'] as num?)?.toInt() ?? 0,
+    ]);
+    await ChatStore.deleteLocalImages([
+      for (final r in rows)
+        if ((r['image_local_path'] as String? ?? '').isNotEmpty)
+          r['image_local_path'] as String,
+    ]);
+    await db.delete('local_chat_message',
+        where: 'id IN ($ph)', whereArgs: unique);
+  }
+
+  /// 删除/隐藏会话：
+  /// - [purgeMessages]=true：彻底删除（本地聊天记录一并清除，空对话人清理用）
+  /// - false：仅隐藏（保留聊天记录，重新收发消息后会自动恢复可见）
+  Future<void> deleteConversation(String chatId,
+      {bool purgeMessages = false}) async {
+    final db = await _database;
+    if (purgeMessages) {
+      final rows = await db.query(
+        'local_chat_message',
+        columns: ['image_local_path'],
+        where: 'chat_id = ?',
+        whereArgs: [chatId],
+      );
+      await ChatStore.deleteLocalImages([
+        for (final r in rows)
+          if ((r['image_local_path'] as String? ?? '').isNotEmpty)
+            r['image_local_path'] as String,
+      ]);
+      await db.delete('local_chat_message',
+          where: 'chat_id = ?', whereArgs: [chatId]);
+    } else {
+      // 记录隐藏状态，防止 syncConversationsFromMessages 重新聚合出会话
+      await db.insert('hidden_conversation', {'chat_id': chatId},
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await db.delete('local_conversation',
+        where: 'chat_id = ?', whereArgs: [chatId]);
+    _notifyUnreadChanged();
   }
 
   /// 获取会话列表（按最近消息时间倒序）
@@ -279,6 +820,18 @@ class ChatStore {
     );
   }
 
+  /// 按 chat_id 查询会话（离线消息通知取昵称/头像用）
+  Future<Map<String, dynamic>?> getConversationByChatId(String chatId) async {
+    final db = await _database;
+    final rows = await db.query(
+      'local_conversation',
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
   /// 清零某会话未读数
   Future<void> clearUnread(String chatId) async {
     final db = await _database;
@@ -288,6 +841,19 @@ class ChatStore {
       where: 'chat_id = ?',
       whereArgs: [chatId],
     );
+    _notifyUnreadChanged();
+  }
+
+  /// 所有会话未读总数（左侧导航消息角标用；未登录返回 0）
+  Future<int> totalUnread() async {
+    try {
+      final db = await _database;
+      final rows = await db.rawQuery(
+          'SELECT COALESCE(SUM(unread_count), 0) AS t FROM local_conversation');
+      return (rows.first['t'] as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// 标记某会话所有消息已读（打开会话时调用）
@@ -302,14 +868,14 @@ class ChatStore {
   }
 
   /// 更新某条消息状态（服务端已读回执后标记）
-  Future<void> markMessagesReadByMsgIds(
+  /// 对方已读回执：标记"我发出的且 msg_id <= upToMsgId"的消息为已读
+  Future<void> markMyMessagesRead(
       String chatId, int myUid, int upToMsgId) async {
     final db = await _database;
-    // 本地 seq 小于等于 upToMsgId 且来自对方的消息标记已读
     await db.update(
       'local_chat_message',
-      {'send_status': 1},
-      where: 'chat_id = ? AND sender_id != ? AND msg_id > 0 AND msg_id <= ?',
+      {'read_status': 1},
+      where: 'chat_id = ? AND sender_id = ? AND msg_id > 0 AND msg_id <= ?',
       whereArgs: [chatId, myUid, upToMsgId],
     );
   }
@@ -321,14 +887,24 @@ class ChatStore {
     required String publicKey,
   }) async {
     final db = await _database;
+    // 私钥用本机派生密钥加密后存储（防数据库文件泄露即明文泄露）
+    final encryptedPriv =
+        await SecureStorage.instance.encryptLocal(privateKey);
     await db.insert(
       'local_key_store',
-      {'user_id': userId, 'private_key': privateKey, 'public_key': publicKey},
+      {
+        'user_id': userId,
+        'private_key': encryptedPriv,
+        'public_key': publicKey,
+      },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
-  /// 获取本地密钥对
+  /// 获取本地密钥对（私钥自动解密；旧版本明文私钥自动迁移为加密）
+  ///
+  /// 解密失败（换机器/换系统导致密钥派生变化）返回 null，
+  /// 上层走"重新生成/claim 托管"流程自动恢复。
   Future<({String privateKey, String publicKey})?> getKeyPair(int userId) async {
     final db = await _database;
     final rows = await db.query(
@@ -338,9 +914,17 @@ class ChatStore {
       limit: 1,
     );
     if (rows.isEmpty) return null;
-    return (
-      privateKey: rows.first['private_key'] as String,
-      publicKey: rows.first['public_key'] as String,
-    );
+    var priv = rows.first['private_key'] as String;
+    final pub = rows.first['public_key'] as String;
+    // 已加密：解密
+    if (priv.startsWith('g1:')) {
+      final decrypted = await SecureStorage.instance.decryptLocal(priv);
+      if (decrypted == null) return null; // 本机解密失败 → 需重新生成
+      priv = decrypted;
+    } else {
+      // 旧版本明文私钥：加密回写迁移
+      await saveKeyPair(userId: userId, privateKey: priv, publicKey: pub);
+    }
+    return (privateKey: priv, publicKey: pub);
   }
 }

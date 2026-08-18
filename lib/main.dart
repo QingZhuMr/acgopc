@@ -32,12 +32,18 @@ import 'core/window_effect.dart';
 import 'pages/login_page.dart';
 import 'pages/maintenance.dart';
 import 'pages/message_page.dart';
+import 'services/chat_notifier.dart';
 import 'services/chat_service.dart';
+import 'services/chat_store.dart';
+import 'services/post_draft_store.dart';
 import 'services/notification_center.dart';
 import 'pages/notification_page.dart';
+import 'utils/image_transcoder.dart';
 import 'widgets/bubble_menu.dart';
+import 'widgets/cached_avatar.dart';
 import 'widgets/notify.dart';
 import 'widgets/pick_images.dart';
+import 'widgets/text_input_menu.dart';
 import 'pages/post_detail_page.dart';
 import 'pages/privacy_settings_page.dart';
 import 'pages/publish_post_page.dart';
@@ -48,7 +54,9 @@ import 'pages/splash_page.dart';
 import 'services/theme_controller.dart';
 import 'services/updater.dart';
 import 'utils/net_image.dart';
+import 'utils/text_sanitize.dart';
 import 'services/ws_service.dart';
+import 'services/image_cache.dart' as disk_cache;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -124,6 +132,9 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
 
   /// 当前登录用户；null 表示未登录（显示登录页）
   Map<String, dynamic>? _user;
+
+  /// WS 聊天消息入库订阅（登录时注册，退出/踢下线时取消）
+  StreamSubscription<Map<String, dynamic>>? _chatMsgSub;
 
   /// 启动页是否结束（期间判断登录）；false 时显示启动页，避免窗口闪烁
   bool _splashDone = false;
@@ -247,6 +258,31 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
   /// 登录成功回调：进入主界面并启动 WebSocket 实时推送
   void _onLoginSuccess(Map<String, dynamic> user) {
     if (mounted) setState(() => _user = user);
+    // 切换聊天本地库到该账号专属文件（acgo_chat_<uid>.db）：
+    // 不同账号会话/消息互不可见，防止 A 看到 B 的历史会话
+    final uid = _resolveCurrentUid(user);
+    if (uid > 0) {
+      ChatStore.instance.openForUser(uid);
+      // 发帖草稿按账号隔离（draft/<uid>/）
+      PostDraftStore.instance.openForUser(uid);
+      // 尽早初始化聊天服务（设置 _userId，WS 消息到达前即正确计算会话归属）
+      // 防止实时消息在 init 前到达导致 chatId 计算错误/入库失败
+      unawaited(() async {
+        await ChatService.instance.init(uid);
+        // 首次登录/切换账号后立即同步离线期间的消息：
+        // WS 重连才会触发 onReconnected，全新登录永远不会走到那条路径，
+        // 导致离线消息不落库 → 会话列表空、无角标、无通知、已读无法上报
+        ChatService.instance.syncOffline();
+      }());
+      // 全局注册 WS 聊天消息入库：实时推送解密落库（串行队列保证顺序）。
+      // 之前该监听缺失，实时消息不落库，全靠 sync/pullHistory 补齐，顺序错乱
+      _chatMsgSub?.cancel();
+      _chatMsgSub = WsService.instance.onChatMessage.listen((m) {
+        ChatService.instance.onIncomingMessage(m);
+      });
+    }
+    // 刷新左侧消息角标（该账号的未读总数；HomePage 监听 tick 自行汇总）
+    ChatStore.instance.chatUnreadTick.value++;
     // 登录成功后启动 WebSocket 实时推送（接收封禁/踢下线/更新/维护/回复通知等主动推送）
     WsService.instance.start(
       onForceLogout: _handleWsForceLogout,
@@ -261,6 +297,14 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
     NotificationCenter.instance.start(
       onOpenPost: _openPostFromNotice,
       onOpenUserProfile: _openUserProfileFromNotice,
+    );
+    // 启动聊天离线消息通知：点击通知跳转对应会话
+    ChatNotifier.instance.start(
+      onOpenChat: (peerId) {
+        if (_HomePageState.current?.mounted == true) {
+          _HomePageState.current!.openChatWithPeer(peerId);
+        }
+      },
     );
     // 登录成功后异步检查更新（不阻塞 UI）
     Updater.instance.showUpdateIfAvailable();
@@ -316,6 +360,15 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
     NotifyStack.warning(reason, title: '账号提示');
     WsService.instance.stop();
     NotificationCenter.instance.stop();
+    ChatNotifier.instance.stop();
+    _chatMsgSub?.cancel();
+    _chatMsgSub = null;
+    // 重置聊天服务账号上下文（防止残留 sync/队列任务把上个账号消息写入新库）
+    ChatService.instance.logout();
+    // 关闭聊天库连接（下次登录按新账号重新打开）
+    ChatStore.instance.closeForUser();
+    // 发帖草稿目录重置（下次登录按新账号切回）
+    PostDraftStore.instance.openForUser(0);
     // 按需清除：仅清登录态（device_key），保留记住的密码与设备标识
     DeviceService.instance.clearDeviceKey();
     setState(() => _user = null);
@@ -353,6 +406,15 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
   Future<void> _logout() async {
     WsService.instance.stop();
     NotificationCenter.instance.stop();
+    ChatNotifier.instance.stop();
+    _chatMsgSub?.cancel();
+    _chatMsgSub = null;
+    // 重置聊天服务账号上下文（防止残留 sync/队列任务把上个账号消息写入新库）
+    ChatService.instance.logout();
+    // 关闭聊天库连接（下次登录按新账号重新打开）
+    ChatStore.instance.closeForUser();
+    // 发帖草稿目录重置（下次登录按新账号切回）
+    PostDraftStore.instance.openForUser(0);
     DeviceService.instance.clearDeviceKey();
     if (mounted) setState(() => _user = null);
   }
@@ -451,6 +513,13 @@ class _HomePageState extends State<HomePage> {
   // 当前选中的导航索引（0=消息，1=广场，2=个人中心）
   int _currentIndex = 1;
 
+  /// 消息页 GlobalKey（聊天离线通知点击跳转会话用）
+  final GlobalKey<MessagePageState> _messagePageKey =
+      GlobalKey<MessagePageState>();
+
+  /// 聊天未读总消息数（左侧导航「消息」角标）
+  int _messageUnread = 0;
+
   /// macOS 内容区覆盖页（发帖/详情内嵌展示，保留左侧导航栏，无返回按钮）
   /// 非 macOS 恒为 null
   Widget? _macOverlay;
@@ -468,12 +537,15 @@ class _HomePageState extends State<HomePage> {
     _HomePageState.current = this;
     // 监听通知中心（未读数变化时刷新铃铛角标）
     NotificationCenter.instance.addListener(_onNotifyChanged);
+    // 监听聊天未读变化（收到消息/打开会话清零/跨端已读 → 刷新消息 tab 角标）
+    ChatStore.instance.chatUnreadTick.addListener(_onChatUnreadChanged);
   }
 
   @override
   void dispose() {
     if (_HomePageState.current == this) _HomePageState.current = null;
     NotificationCenter.instance.removeListener(_onNotifyChanged);
+    ChatStore.instance.chatUnreadTick.removeListener(_onChatUnreadChanged);
     super.dispose();
   }
 
@@ -502,6 +574,15 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() {});
   }
 
+  /// 聊天未读变化：重新汇总所有会话未读，刷新左侧「消息」角标
+  void _onChatUnreadChanged() {
+    if (!mounted) return;
+    ChatStore.instance.totalUnread().then((n) {
+      if (!mounted || n == _messageUnread) return;
+      setState(() => _messageUnread = n);
+    });
+  }
+
   /// 从 user map 解析用户 id（兼容 'id' / 'user_id' 字段）
   static int _resolveUid(Map<String, dynamic> user) {
     for (final key in const ['id', 'user_id', 'uid']) {
@@ -522,7 +603,16 @@ class _HomePageState extends State<HomePage> {
         _NavItem(
           Icons.mode_comment_rounded,
           '消息',
-          MessagePage(currentUserId: _resolveUid(widget.user)),
+          MessagePage(
+            key: _messagePageKey,
+            currentUserId: _resolveUid(widget.user),
+            // 当前用户头像（自己消息气泡组头头像）
+            currentUserAvatar: widget.user['avatar']?.toString() ?? '',
+            // IndexedStack 保留 State：切回消息页时靠此参数触发刷新
+            active: _currentIndex == 0,
+            // 聊天标题栏弹出层「进入他的主页」
+            onOpenUserProfile: openUserProfile,
+          ),
         ),
         _NavItem(
           Icons.space_dashboard_rounded,
@@ -581,6 +671,21 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _macOverlay = null;
       _currentIndex = index;
+    });
+  }
+
+  /// 聊天离线通知点击：切到消息 tab 并打开指定好友会话
+  void openChatWithPeer(int peerId) {
+    if (!mounted || peerId <= 0) return;
+    if (_currentIndex != 0) {
+      setState(() {
+        _macOverlay = null;
+        _currentIndex = 0;
+      });
+    }
+    // 切 tab 后消息页重建/状态就绪，延迟一帧调用确保可用
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _messagePageKey.currentState?.openChatWithPeer(peerId);
     });
   }
 
@@ -724,12 +829,13 @@ class _HomePageState extends State<HomePage> {
           ),
         // 顶部留白：让导航项避开顶栏区域，与 Finder 侧边栏间距一致
         const SizedBox(height: 16),
-        // 导航项（消息，广场上方）
+        // 导航项（消息，广场上方）；未读聊天消息总数角标
         _MacRailItem(
           icon: Icons.mode_comment_rounded,
           label: '消息',
           selected: _currentIndex == 0,
           brightness: b,
+          badge: _messageUnread,
           onTap: () => _switchTab(0),
         ),
         // 导航项（广场）
@@ -862,34 +968,38 @@ class _MacRailItem extends StatelessWidget {
           child: Row(
             children: [
               const SizedBox(width: 10),
-              Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.center,
-                children: [
-                  Icon(
-                    icon,
-                    size: 20,
-                    color: selected ? kPrimary : textColor(brightness),
-                  ),
-                  if (badge > 0)
-                    Positioned(
-                      right: -8,
-                      top: -5,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: kDanger,
-                          borderRadius: BorderRadius.circular(kRadiusFull),
-                        ),
-                        child: Text(
-                          badge > 99 ? '99+' : '$badge',
-                          style: const TextStyle(
-                              fontSize: 9, color: Colors.white),
+              // 图标整体下移 1px（视觉对齐用，不参与布局，旁边文字位置不受影响）
+              Transform.translate(
+                offset: const Offset(0, 1),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    Icon(
+                      icon,
+                      size: 20,
+                      color: selected ? kPrimary : textColor(brightness),
+                    ),
+                    if (badge > 0)
+                      Positioned(
+                        right: -8,
+                        top: -5,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: kDanger,
+                            borderRadius: BorderRadius.circular(kRadiusFull),
+                          ),
+                          child: Text(
+                            badge > 99 ? '99+' : '$badge',
+                            style: const TextStyle(
+                                fontSize: 9, color: Colors.white),
+                          ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1317,11 +1427,17 @@ class _HomeViewState extends State<_HomeView>
                 color: bgHoverColor(b),
                 borderRadius: BorderRadius.circular(kRadiusCard),
               ),
-              child: TextField(
+              child: TextInputBubbleMenu(
+                controller: _searchCtrl,
+                child: TextField(
                 controller: _searchCtrl,
                 onChanged: _onSearchChanged,
                 textInputAction: TextInputAction.search,
                 textAlignVertical: TextAlignVertical.center,
+                // 禁用系统右键菜单（统一用气泡方案）
+                contextMenuBuilder: (_, __) => const SizedBox.shrink(),
+                // 过滤粘贴/输入的非法 UTF-16 代理项（防渲染崩溃）
+                inputFormatters: const [Utf16SanitizeTextInputFormatter()],
                 style: TextStyle(fontSize: 14, color: textColor(b)),
                 cursorColor: kPrimary,
                 decoration: InputDecoration(
@@ -1358,6 +1474,7 @@ class _HomeViewState extends State<_HomeView>
                   hintText: '搜索感兴趣的动态',
                   hintStyle:
                       TextStyle(fontSize: 14, color: textFaintColor(b)),
+                ),
                 ),
               ),
             ),
@@ -1423,7 +1540,6 @@ class _HomeViewState extends State<_HomeView>
                 _MasonryGrid(
                   posts: _posts,
                   columns: columns,
-                  coverHeight: _coverHeight,
                   onPostTap: _openPostDetail,
                 ),
                 if (_loadingMore)
@@ -1464,16 +1580,6 @@ class _HomeViewState extends State<_HomeView>
     return n.clamp(1, 6).toInt();
   }
 
-  /// 封面图高度：确定性伪随机（按帖子 id + 正文长度），落在 [170, 288] 区间，
-  /// 制造小红书式错落，且满足「高度跟随封面图、有最大/最小限制」。
-  double _coverHeight(Map<String, dynamic> post) {
-    final id = (post['id'] as num?)?.toInt() ?? 0;
-    final content = post['content']?.toString() ?? '';
-    final images = (post['images'] as List<dynamic>?) ?? const [];
-    final seed = ((id * 31 + content.length + images.length) % 100).abs();
-    return 170 + seed * 1.2;
-  }
-
   Widget _buildEmpty(Brightness b, IconData icon, String text) {
     return Center(
       child: Column(
@@ -1488,20 +1594,29 @@ class _HomeViewState extends State<_HomeView>
   }
 }
 
+/// 封面图**占位高度**（图片解码完成前使用）：确定性伪随机落在 [200, 320] 制造错落。
+/// 图片解码完成后由 `_CoverImage` 按真实宽高比重算
+/// （`宽 × 高/宽`，**最多 9:16**——高 > 宽×16/9 封顶裁剪，最小 180），不依赖后端字段。
+double _coverHeightFor(Map<String, dynamic> post) {
+  final id = (post['id'] as num?)?.toInt() ?? 0;
+  final content = post['content']?.toString() ?? '';
+  final images = (post['images'] as List<dynamic>?) ?? const [];
+  final seed = ((id * 31 + content.length + images.length) % 100).abs();
+  return 200 + seed * 1.2;
+}
+
 /// 帖子卡片（小红书瀑布流：封面图 + 正文 + 头像昵称 + 点赞数）
 class _PostCard extends StatefulWidget {
   final Map<String, dynamic> post;
-  final double coverHeight;
   final VoidCallback onTap;
 
-  /// 右键菜单回调（参数：右键全局坐标；null 不监听右键）
-  final void Function(Offset globalPos)? onContextMenu;
+  /// 右键菜单项（统一用全局 BubbleMenu 气泡弹出；null/空则不监听右键）
+  final List<BubbleMenuItem>? menuItems;
 
   const _PostCard({
     required this.post,
-    required this.coverHeight,
     required this.onTap,
-    this.onContextMenu,
+    this.menuItems,
   });
 
   @override
@@ -1511,6 +1626,21 @@ class _PostCard extends StatefulWidget {
 class _PostCardState extends State<_PostCard> {
   bool _hover = false;
   bool _pressed = false;
+
+  /// 封面图解码完成后按真实宽高比算出的高度（null=尚未解码，用占位高度）
+  double? _coverH;
+
+  /// 图片解码完成 → 用真实宽高比 + [coverWidth] 重算封面高度（最多 9:16，最小 180）
+  void _onCoverLoaded(int w, int h, double coverWidth) {
+    if (_coverH != null || w <= 0 || h <= 0 || coverWidth <= 0 || !mounted) {
+      return;
+    }
+    final ratio = (h / w).clamp(180.0 / coverWidth, 16 / 9);
+    final real = coverWidth * ratio;
+    final placeholder = _coverHeightFor(widget.post);
+    if ((real - placeholder).abs() < 1) return;
+    setState(() => _coverH = real);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1531,15 +1661,11 @@ class _PostCardState extends State<_PostCard> {
     final borderColor =
         b == Brightness.dark ? DarkColors.border : LightColors.border;
 
-    return MouseRegion(
+    final card = MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
-        // 鼠标右键（Windows/macOS 均触发）
-        onSecondaryTapDown: widget.onContextMenu != null
-            ? (d) => widget.onContextMenu!(d.globalPosition)
-            : null,
         child: AnimatedScale(
         scale: _pressed ? 0.97 : (_hover ? 1.02 : 1.0),
         duration: const Duration(milliseconds: 160),
@@ -1572,12 +1698,22 @@ class _PostCardState extends State<_PostCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // 封面：有图用首图，无图用纯色文字封面（客户端算法生成，省服务器开销）
-                  if (cover != null)
-                    _CoverImage(url: cover, height: widget.coverHeight)
-                  else
-                    _TextCover(content: content, height: widget.coverHeight),
-                  // 正文（有图时最多 2 行；无图时文字已展示在纯色封面中，避免重复）
-                  if (content.isNotEmpty && cover != null)
+                  // 高度先用占位（伪随机），图片解码完成后按真实宽高比自适应（最大 9:16）
+                  LayoutBuilder(
+                    builder: (ctx, c) {
+                      final h = _coverH ?? _coverHeightFor(widget.post);
+                      return cover != null
+                          ? _CoverImage(
+                              url: cover,
+                              fallbackHeight: h,
+                              onLoaded: (w, ih) =>
+                                  _onCoverLoaded(w, ih, c.maxWidth),
+                            )
+                          : _TextCover(content: content, height: h);
+                    },
+                  ),
+                  // 正文（最多 2 行；有图时在图片下方，无图时在纯色封面下方，与真图片卡片一致）
+                  if (content.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
                       child: Text(
@@ -1645,15 +1781,34 @@ class _PostCardState extends State<_PostCard> {
         ),
       ),
     );
+    // 右键菜单：统一用全局 BubbleMenu 气泡弹出（无菜单项则不可右键）
+    final menu = widget.menuItems;
+    if (menu == null || menu.isEmpty) return card;
+    return BubbleMenu(
+      triggerOnRightClick: true,
+      items: menu,
+      child: card,
+    );
   }
 }
 
 /// 封面图（网络图 + 统一加载 / 错误兜底）
+/// 封面图片：铺满裁剪（cover）显示，图片解码完成后通过 [onLoaded] 上报真实宽高，
+/// 由卡片（`_PostCardState`）重算高度（最多 9:16，最小 120）。
 class _CoverImage extends StatelessWidget {
   final String url;
-  final double height;
 
-  const _CoverImage({required this.url, required this.height});
+  /// 图片解码完成前的占位高度（伪随机，制造瀑布流错落）
+  final double fallbackHeight;
+
+  /// 图片解码完成回调（携带实际宽高）
+  final void Function(int w, int h)? onLoaded;
+
+  const _CoverImage({
+    required this.url,
+    required this.fallbackHeight,
+    this.onLoaded,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1663,15 +1818,20 @@ class _CoverImage extends StatelessWidget {
       child: NetImage(
         url: url,
         width: double.infinity,
-        height: height,
+        height: fallbackHeight,
+        // 封面图片铺满裁剪（cover），保持原有小红书卡片视觉。
+        // 区域高度按图片宽高比计算、最多 9:16（9:16 竖图完整显示，超高图封顶）
         fit: BoxFit.cover,
         cacheWidth: 480, // 限制解码尺寸，降低内存与解码开销，提升滚动流畅度
+        onLoaded: onLoaded,
       ),
     );
   }
 }
 
-/// 无图动态的算法封面：确定性纯色背景 + 内容文字（浅底深字，对比度固定，客户端本地生成，不占服务器开销）
+/// 无图动态的算法封面：确定性纯色背景 + 内容文字
+/// （浅底深字，对比度固定，客户端本地生成，不占服务器开销）。
+/// 卡片场景封面内显示内容引文，封面下方正文区再显示完整标题正文（两者都显示）。
 class _TextCover extends StatelessWidget {
   final String content;
   final double height;
@@ -1854,72 +2014,77 @@ class _SkeletonCard extends StatelessWidget {
 class _MasonryGrid extends StatelessWidget {
   final List<Map<String, dynamic>> posts;
   final int columns;
-  final double Function(Map<String, dynamic>) coverHeight;
   final void Function(Map<String, dynamic>) onPostTap;
 
-  /// 右键回调（收藏/历史 tab 弹出操作菜单；参数：帖子 + 右键全局坐标；null 不监听）
-  final void Function(Map<String, dynamic> post, Offset globalPos)? onContextMenu;
+  /// 右键菜单项构建器（收藏/历史 tab；null 不监听右键）
+  final List<BubbleMenuItem> Function(Map<String, dynamic> post)? onContextMenu;
 
   const _MasonryGrid({
     required this.posts,
     required this.columns,
-    required this.coverHeight,
     required this.onPostTap,
     this.onContextMenu,
   });
 
   @override
   Widget build(BuildContext context) {
-    // 估算每张卡片高度用于贪心分配（近似即可，不影响实际渲染高度）
+    // 估算每张卡片高度用于贪心分配（近似即可，不影响实际渲染高度）。
+    // 封面高度用占位估算（图片解码完成后 _CoverImage 按真实宽高比自适应）。
     double estHeight(Map<String, dynamic> p) {
       final content = p['content']?.toString() ?? '';
       final lines =
           content.isEmpty ? 0 : (content.length / 14).ceil().clamp(1, 2).toInt();
-      return coverHeight(p) + (content.isEmpty ? 0 : 10 + lines * 20) + 56;
+      return _coverHeightFor(p) +
+          (content.isEmpty ? 0 : 10 + lines * 20) +
+          56;
     }
 
-    final cols = List.generate(columns, (_) => <Map<String, dynamic>>[]);
-    final heights = List.filled(columns, 0.0);
-    for (final p in posts) {
-      var idx = 0;
-      var minH = heights[0];
-      for (var i = 1; i < columns; i++) {
-        if (heights[i] < minH) {
-          minH = heights[i];
-          idx = i;
+    // 用 LayoutBuilder 拿列宽布局（占位高度不需要真实列宽，图片解码后自适应）
+    return LayoutBuilder(
+      builder: (ctx, c) {
+        final gap = 12.0;
+
+        final cols = List.generate(columns, (_) => <Map<String, dynamic>>[]);
+        final heights = List.filled(columns, 0.0);
+        for (final p in posts) {
+          var idx = 0;
+          var minH = heights[0];
+          for (var i = 1; i < columns; i++) {
+            if (heights[i] < minH) {
+              minH = heights[i];
+              idx = i;
+            }
+          }
+          cols[idx].add(p);
+          heights[idx] += estHeight(p);
         }
-      }
-      cols[idx].add(p);
-      heights[idx] += estHeight(p);
-    }
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < columns; i++) ...[
-          if (i > 0) const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              children: [
-                for (final p in cols[i])
-                  RepaintBoundary(
-                    child: Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _PostCard(
-                        post: p,
-                        coverHeight: coverHeight(p),
-                        onTap: () => onPostTap(p),
-                        onContextMenu: onContextMenu != null
-                            ? (pos) => onContextMenu!(p, pos)
-                            : null,
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < columns; i++) ...[
+              if (i > 0) SizedBox(width: gap),
+              Expanded(
+                child: Column(
+                  children: [
+                    for (final p in cols[i])
+                      RepaintBoundary(
+                        child: Padding(
+                          padding: EdgeInsets.only(bottom: gap),
+                          child: _PostCard(
+                            post: p,
+                            onTap: () => onPostTap(p),
+                            menuItems: onContextMenu?.call(p),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ],
+                  ],
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -2320,9 +2485,8 @@ class _ProfileViewState extends State<_ProfileView> {
                       _MasonryGrid(
                         posts: _myPosts,
                         columns: _favColumns(constraints.maxWidth),
-                        coverHeight: _favCoverHeight,
                         onPostTap: (p) => _openMyPost(p),
-                        onContextMenu: (p, pos) => _myPostContextMenu(p, pos),
+                        onContextMenu: (p) => _myPostMenuItems(p),
                       ),
                     if (_myLoadingMore)
                       const Padding(
@@ -2349,9 +2513,8 @@ class _ProfileViewState extends State<_ProfileView> {
                       _MasonryGrid(
                         posts: _favorites,
                         columns: _favColumns(constraints.maxWidth),
-                        coverHeight: _favCoverHeight,
                         onPostTap: (p) => _openFavPost(p),
-                        onContextMenu: (p, pos) => _favContextMenu(p, pos),
+                        onContextMenu: (p) => _favMenuItems(p),
                       ),
                     if (_favLoadingMore)
                       const Padding(
@@ -2515,35 +2678,13 @@ class _ProfileViewState extends State<_ProfileView> {
     }
   }
 
-  /// 动态卡片右键菜单（删除自己的动态）
-  Future<void> _myPostContextMenu(Map<String, dynamic> p, Offset globalPos) async {
+  /// 动态卡片右键菜单项（删除自己的动态；统一用 BubbleMenu 气泡弹出）
+  List<BubbleMenuItem> _myPostMenuItems(Map<String, dynamic> p) {
     final id = (p['id'] as num?)?.toInt() ?? 0;
-    if (id <= 0) return;
-    final b = Theme.of(context).brightness;
-    final action = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-          globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy),
-      color: bgColor(b),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(kRadiusMd),
-      ),
-      items: [
-        PopupMenuItem(
-          value: 'del',
-          height: 36,
-          child: Row(
-            children: [
-              Icon(Icons.delete_outline, size: 16, color: kDanger),
-              const SizedBox(width: 8),
-              Text('删除动态', style: TextStyle(fontSize: 13, color: kDanger)),
-            ],
-          ),
-        ),
-      ],
-    );
-    if (action != 'del' || !mounted) return;
-    _deleteMyPost(id);
+    return [
+      if (id > 0)
+        BubbleMenuItem.delete('删除动态', onTap: () => _deleteMyPost(id)),
+    ];
   }
 
   /// 删除自己的动态（确认后删除，成功后从列表移除）
@@ -2623,15 +2764,6 @@ class _ProfileViewState extends State<_ProfileView> {
     const gap = 12.0;
     final n = ((width + gap) / (minCardWidth + gap)).floor();
     return n.clamp(1, 6).toInt();
-  }
-
-  /// 收藏卡片封面高度（与首页一致：确定性伪随机，落在 [170, 288] 区间）
-  double _favCoverHeight(Map<String, dynamic> post) {
-    final id = (post['id'] as num?)?.toInt() ?? 0;
-    final content = post['content']?.toString() ?? '';
-    final images = (post['images'] as List<dynamic>?) ?? const [];
-    final seed = ((id * 31 + content.length + images.length) % 100).abs();
-    return 170 + seed * 1.2;
   }
 
   /// 加载我的收藏第一页
@@ -2766,9 +2898,8 @@ class _ProfileViewState extends State<_ProfileView> {
         _MasonryGrid(
           posts: g.items,
           columns: _favColumns(constraints.maxWidth),
-          coverHeight: _favCoverHeight,
           onPostTap: (p) => _openHistoryPost(p),
-          onContextMenu: (p, pos) => _historyContextMenu(p, pos),
+          onContextMenu: (p) => _historyMenuItems(p),
         ),
       );
       widgets.add(const SizedBox(height: 12));
@@ -2856,36 +2987,17 @@ class _ProfileViewState extends State<_ProfileView> {
     }
   }
 
-  /// 收藏卡片右键菜单（取消收藏）
-  Future<void> _favContextMenu(Map<String, dynamic> p, Offset globalPos) async {
+  /// 收藏卡片右键菜单项（取消收藏；统一用 BubbleMenu 气泡弹出）
+  List<BubbleMenuItem> _favMenuItems(Map<String, dynamic> p) {
     final id = (p['id'] as num?)?.toInt() ?? 0;
-    if (id <= 0) return;
-    final b = Theme.of(context).brightness;
-    final action = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-          globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy),
-      color: bgColor(b),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(kRadiusMd),
-      ),
-      items: [
-        PopupMenuItem(
-          value: 'unfav',
-          height: 36,
-          child: Row(
-            children: [
-              Icon(Icons.star_border_rounded,
-                  size: 16, color: textMutedColor(b)),
-              const SizedBox(width: 8),
-              Text('取消收藏', style: TextStyle(fontSize: 13, color: textColor(b))),
-            ],
-          ),
+    return [
+      if (id > 0)
+        BubbleMenuItem(
+          label: '取消收藏',
+          icon: Icons.star_border_rounded,
+          onTap: () => _unfavoritePost(id),
         ),
-      ],
-    );
-    if (action != 'unfav' || !mounted) return;
-    _unfavoritePost(id);
+    ];
   }
 
   /// 取消收藏（走已有 togglePostFavorite 接口）
@@ -2938,36 +3050,14 @@ class _ProfileViewState extends State<_ProfileView> {
     _loadFavorites();
   }
 
-  /// 历史卡片右键菜单（删除该记录）
-  Future<void> _historyContextMenu(
-      Map<String, dynamic> p, Offset globalPos) async {
+  /// 历史卡片右键菜单项（删除该记录；统一用 BubbleMenu 气泡弹出）
+  List<BubbleMenuItem> _historyMenuItems(Map<String, dynamic> p) {
     final id = (p['id'] as num?)?.toInt() ?? 0;
-    if (id <= 0) return;
-    final b = Theme.of(context).brightness;
-    final action = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-          globalPos.dx, globalPos.dy, globalPos.dx, globalPos.dy),
-      color: bgColor(b),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(kRadiusMd),
-      ),
-      items: [
-        PopupMenuItem(
-          value: 'del',
-          height: 36,
-          child: Row(
-            children: [
-              Icon(Icons.delete_outline, size: 16, color: kDanger),
-              const SizedBox(width: 8),
-              Text('删除该记录', style: TextStyle(fontSize: 13, color: kDanger)),
-            ],
-          ),
-        ),
-      ],
-    );
-    if (action != 'del' || !mounted) return;
-    _deleteHistoryRecord(id);
+    return [
+      if (id > 0)
+        BubbleMenuItem.delete(
+            '删除该记录', onTap: () => _deleteHistoryRecord(id)),
+    ];
   }
 
   /// 删除单条浏览历史（服务端 + 本地）
@@ -3096,23 +3186,30 @@ class _ProfileViewState extends State<_ProfileView> {
                   ),
                   const SizedBox(height: 28),
                   // 昵称
-                  TextField(
+                  TextInputBubbleMenu(
                     controller: nameCtrl,
-                    style: TextStyle(color: textColor(b)),
-                    decoration: InputDecoration(
-                      labelText: '昵称',
-                      labelStyle: TextStyle(color: textMutedColor(b)),
-                      filled: true,
-                      fillColor: bgColor(b),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(kRadiusMd),
-                        borderSide: BorderSide(
-                            color: textFaintColor(b).withValues(alpha: .3)),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(kRadiusMd),
-                        borderSide:
-                            const BorderSide(color: kPrimary, width: 1.5),
+                    child: TextField(
+                      controller: nameCtrl,
+                      // 禁用系统右键菜单（统一用气泡方案）
+                      contextMenuBuilder: (_, __) => const SizedBox.shrink(),
+                      // 过滤粘贴/输入的非法 UTF-16 代理项（防渲染崩溃）
+                      inputFormatters: const [Utf16SanitizeTextInputFormatter()],
+                      style: TextStyle(color: textColor(b)),
+                      decoration: InputDecoration(
+                        labelText: '昵称',
+                        labelStyle: TextStyle(color: textMutedColor(b)),
+                        filled: true,
+                        fillColor: bgColor(b),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(kRadiusMd),
+                          borderSide: BorderSide(
+                              color: textFaintColor(b).withValues(alpha: .3)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(kRadiusMd),
+                          borderSide:
+                              const BorderSide(color: kPrimary, width: 1.5),
+                        ),
                       ),
                     ),
                   ),
@@ -3147,7 +3244,7 @@ class _ProfileViewState extends State<_ProfileView> {
   List<int>? _selectedAvatarBytes;
   String? _selectedAvatarName;
 
-  /// 选择头像图片并裁剪：选图 → 打开裁剪对话框 → 得到裁剪后的 PNG bytes → 本地预览
+  /// 选择头像图片并裁剪：选图 → 打开裁剪对话框 → 裁剪 PNG → 转码 jpg → 本地预览
   Future<void> _pickAndCropAvatar(StateSetter setDialogState) async {
     try {
       final picked = await pickImages(allowMultiple: false);
@@ -3156,6 +3253,12 @@ class _ProfileViewState extends State<_ProfileView> {
 
       // 读取原图 bytes（裁剪对话框用）
       final Uint8List sourceBytes = file.bytes;
+
+      // 头像不支持 GIF 动图（未来可作为会员特权）
+      if (ImageTranscoder.isGif(sourceBytes)) {
+        NotifyStack.warning('头像暂不支持GIF动图，请选择静态图片', title: '提示');
+        return;
+      }
 
       // 原始图片 ≤5MB 限制
       if (sourceBytes.length > 5 * 1024 * 1024) {
@@ -3167,9 +3270,12 @@ class _ProfileViewState extends State<_ProfileView> {
       final cropped = await _AvatarCropDialog.show(context, sourceBytes);
       if (cropped == null || !mounted) return;
 
-      // 裁剪成功：更新本地预览（还没上传，保存时才上传）
-      _selectedAvatarBytes = cropped;
-      _selectedAvatarName = 'avatar_cropped.png';
+      // 裁剪成功：统一转码 jpg 再存本地预览（上传/存储都按 JPEG）
+      final t = await ImageTranscoder.toJpeg(
+          bytes: Uint8List.fromList(cropped), name: 'avatar_cropped.png');
+      if (t == null || !mounted) return;
+      _selectedAvatarBytes = t.bytes;
+      _selectedAvatarName = t.name;
       // 用对话框的 setDialogState 刷新头像预览（对话框是独立 StatefulBuilder，
       // 用 ProfileView 的 setState 不会触发它 rebuild）
       setDialogState(() {});
@@ -3424,6 +3530,9 @@ class _UserProfilePageState extends State<UserProfilePage> {
   bool _failedPosts = false;
   bool _failedFavs = false;
 
+  /// 对方已拉黑我（或我拉黑了对方）：主页内容全部不可见
+  bool _blocked = false;
+
   /// 关注状态
   bool _isFollowing = false;
   bool _isMutual = false;
@@ -3516,6 +3625,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
         _posts =
             list.map((e) => (e as Map<String, dynamic>?) ?? {}).toList();
         _postsVisible = (data['visible'] ?? 1) == 1;
+        // 拉黑互不可见：任一接口返回 blocked=1 即整体不可见
+        if ((data['blocked'] ?? 0) == 1) _blocked = true;
         _loadingPosts = false;
       });
     } catch (e) {
@@ -3557,6 +3668,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
         _favorites =
             list.map((e) => (e as Map<String, dynamic>?) ?? {}).toList();
         _favsVisible = (data['visible'] ?? 1) == 1;
+        // 拉黑互不可见：任一接口返回 blocked=1 即整体不可见
+        if ((data['blocked'] ?? 0) == 1) _blocked = true;
         _loadingFavs = false;
       });
     } catch (e) {
@@ -3567,6 +3680,24 @@ class _UserProfilePageState extends State<UserProfilePage> {
         _failedFavs = true;
       });
     }
+  }
+
+  /// 拉黑关系占位标签（不能关注，展示"已被拉黑"）
+  Widget _buildBlockedTag(Brightness b) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+      decoration: BoxDecoration(
+        color: bgSoftColor(b),
+        borderRadius: BorderRadius.circular(kRadiusFull),
+      ),
+      child: Text(
+        '已被拉黑',
+        style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: textFaintColor(b)),
+      ),
+    );
   }
 
   /// 关注按钮（互相关注 → "互相关注"；已关注 → "已关注"；未关注 → "关注"）
@@ -3800,9 +3931,10 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                 ],
                               ),
                             ),
-                            // 关注 / 已关注 按钮（互相关注显示"互相关注"）
+                            // 关注 / 已关注 按钮（互相关注显示"互相关注"；
+                            // 拉黑关系时禁用并显示"已被拉黑"）
                             const SizedBox(width: 12),
-                            _buildFollowButton(b),
+                            _blocked ? _buildBlockedTag(b) : _buildFollowButton(b),
                           ],
                         ),
                       ),
@@ -3850,6 +3982,24 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final visible = isPosts ? _postsVisible : _favsVisible;
     final columns = _profileColumns(constraints.maxWidth);
 
+    // 拉黑互不可见：动态/收藏等所有记录不可见
+    if (_blocked) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.block_rounded,
+                size: 40, color: textFaintColor(b).withValues(alpha: 0.6)),
+            const SizedBox(height: 12),
+            Text(
+              '你们之间存在拉黑关系，无法查看 TA 的内容',
+              style: TextStyle(fontSize: 14, color: textMutedColor(b)),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (loading) {
       return _SkeletonGrid(columns: columns);
     }
@@ -3891,7 +4041,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
     return _MasonryGrid(
       posts: list,
       columns: columns,
-      coverHeight: _profileCoverHeight,
       onPostTap: (p) => _openPostInContent(p),
     );
   }
@@ -3902,15 +4051,6 @@ class _UserProfilePageState extends State<UserProfilePage> {
     const gap = 12.0;
     final n = ((width + gap) / (minCardWidth + gap)).floor();
     return n.clamp(1, 6).toInt();
-  }
-
-  /// 封面高度（与个人中心一致）
-  double _profileCoverHeight(Map<String, dynamic> post) {
-    final id = (post['id'] as num?)?.toInt() ?? 0;
-    final content = post['content']?.toString() ?? '';
-    final images = (post['images'] as List<dynamic>?) ?? const [];
-    final seed = ((id * 31 + content.length + images.length) % 100).abs();
-    return 170 + seed % 119; // 落在 [170, 288]
   }
 
   /// 点击帖子卡片 → 在内容区打开详情
@@ -4350,23 +4490,31 @@ class _PwdField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
+    return TextInputBubbleMenu(
       controller: controller,
-      obscureText: true,
-      style: TextStyle(color: textColor(brightness)),
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: TextStyle(color: textMutedColor(brightness)),
-        filled: true,
-        fillColor: bgColor(brightness),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(kRadiusMd),
-          borderSide:
-              BorderSide(color: textFaintColor(brightness).withValues(alpha: .3)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(kRadiusMd),
-          borderSide: const BorderSide(color: kPrimary, width: 1.5),
+      obscure: true,
+      child: TextField(
+        controller: controller,
+        obscureText: true,
+        // 禁用系统右键菜单（统一用气泡方案）
+        contextMenuBuilder: (_, __) => const SizedBox.shrink(),
+        // 过滤粘贴/输入的非法 UTF-16 代理项（防渲染崩溃）
+        inputFormatters: const [Utf16SanitizeTextInputFormatter()],
+        style: TextStyle(color: textColor(brightness)),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: textMutedColor(brightness)),
+          filled: true,
+          fillColor: bgColor(brightness),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(kRadiusMd),
+            borderSide: BorderSide(
+                color: textFaintColor(brightness).withValues(alpha: .3)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(kRadiusMd),
+            borderSide: const BorderSide(color: kPrimary, width: 1.5),
+          ),
         ),
       ),
     );
@@ -4401,6 +4549,67 @@ class _SettingsViewState extends State<_SettingsView> {
     _theme.setMode(mode);
     // 本地 setState 确保单选圈等 UI 立即刷新（不依赖父级重建）
     if (mounted) setState(() {});
+  }
+
+  /// 字节格式化（B / KB / MB）
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+
+  /// 当前缓存总大小（图片缓存 + 头像缓存 + 聊天图片缓存），字节
+  Future<int> _cacheTotalBytes() async {
+    var total = 0;
+    total += await disk_cache.ImageCache.instance.currentUserBytes();
+    // 头像缓存目录（CachedAvatar 用）
+    try {
+      final d =
+          Directory('${AppConfig.dataDir}${Platform.pathSeparator}avatar_cache');
+      if (d.existsSync()) {
+        await for (final e in d.list(recursive: true)) {
+          if (e is File) total += await e.length();
+        }
+      }
+    } catch (_) {}
+    // 聊天图片本地缓存目录
+    try {
+      final uid = ChatStore.instance.currentUid;
+      final d = Directory(ChatStore.chatImageDirFor(uid));
+      if (d.existsSync()) {
+        await for (final e in d.list(recursive: true)) {
+          if (e is File) total += await e.length();
+        }
+      }
+    } catch (_) {}
+    return total;
+  }
+
+  /// 清除缓存：图片缓存 + 头像缓存 + 聊天图片缓存
+  Future<void> _clearCache() async {
+    final confirmed = await AppDialog.confirm(
+      context,
+      title: '清除缓存',
+      message: '将清除本地缓存图片（帖子图片/头像/聊天图片），\n下次打开会自动重新下载。确定清除吗？',
+      confirmText: '清除',
+      danger: true,
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await disk_cache.ImageCache.instance.clearCurrentUser();
+      // 头像缓存目录（CachedAvatar 用）
+      final d =
+          Directory('${AppConfig.dataDir}${Platform.pathSeparator}avatar_cache');
+      if (d.existsSync()) await d.delete(recursive: true);
+      // 聊天图片本地缓存目录
+      final uid = ChatStore.instance.currentUid;
+      final chatDir = Directory(ChatStore.chatImageDirFor(uid));
+      if (chatDir.existsSync()) await chatDir.delete(recursive: true);
+    } catch (_) {}
+    if (mounted) {
+      setState(() {});
+      NotifyStack.success('缓存已清除', title: '提示');
+    }
   }
 
   @override
@@ -4459,6 +4668,32 @@ class _SettingsViewState extends State<_SettingsView> {
                   onTap: _selectMode,
                 ),
               ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          // ===== 清除缓存（在检查更新上方） =====
+          Card(
+            elevation: 0,
+            color: bgHoverColor(b),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(kRadiusMd),
+            ),
+            child: ListTile(
+              leading: const Icon(Icons.cleaning_services_outlined,
+                  color: kPrimary),
+              title: Text('清除缓存',
+                  style: TextStyle(color: textColor(b), fontSize: 14)),
+              subtitle: FutureBuilder<int>(
+                future: _cacheTotalBytes(),
+                builder: (context, snap) {
+                  final bytes = snap.data ?? 0;
+                  return Text(
+                    bytes > 0 ? '占用 ${_formatBytes(bytes)}' : '当前无缓存',
+                    style: TextStyle(color: textMutedColor(b)),
+                  );
+                },
+              ),
+              onTap: _clearCache,
             ),
           ),
           const SizedBox(height: 12),
@@ -4674,20 +4909,12 @@ class _UserAvatar extends StatelessWidget {
       return placeholder;
     }
 
-    return ClipOval(
-      child: Image.network(
-        avatarUrl!,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        // 加载中显示首字占位
-        loadingBuilder: (context, child, progress) {
-          if (progress == null) return child;
-          return placeholder;
-        },
-        // 加载失败 fallback 到首字
-        errorBuilder: (context, error, stackTrace) => placeholder,
-      ),
+    // 头像磁盘缓存：好友/作者不换头像时不重复网络加载
+    // （缓存文件损坏时 CachedAvatar 内部回退网络加载）
+    return CachedAvatar(
+      url: avatarUrl!,
+      size: size,
+      fallbackText: nickname,
     );
   }
 

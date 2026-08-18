@@ -376,8 +376,12 @@ class _RelationListPageState extends State<RelationListPage> {
     final uid = (u['user_id'] as num?)?.toInt() ?? 0;
     final nickname = u['nickname']?.toString() ?? '';
     final avatar = u['avatar']?.toString() ?? '';
-    final isMutual = (u['is_mutual'] ?? false) == true;
-    final isFollowing = (u['is_following'] ?? isMutual) == true;
+    // 互相关注 tab 全部是好友，恒为互关；其余 tab 按接口 is_mutual
+    final isMutual = _tab == 0 || (u['is_mutual'] ?? false) == true;
+    // 已关注：互关/关注 tab 恒为已关注；粉丝 tab 仅互关才算已关注
+    final isFollowing = _tab != 2 || isMutual;
+    // 右侧按钮：互相关注 tab 不显示任何操作按钮（全是好友，无关注/取关意义）
+    final showFollowBtn = _tab != 0;
     final busy = _followBusy.contains(uid);
 
     return InkWell(
@@ -429,7 +433,8 @@ class _RelationListPageState extends State<RelationListPage> {
               ),
               const SizedBox(width: 8),
             ],
-            _followButton(b, uid, isFollowing, busy),
+            // 互相关注 tab 无操作按钮；其余 tab 显示 已关注/关注 按钮
+            if (showFollowBtn) _followButton(b, uid, isFollowing, busy),
           ],
         ),
       ),
@@ -445,7 +450,8 @@ class _RelationListPageState extends State<RelationListPage> {
       mouseCursor: SystemMouseCursors.click,
       borderRadius: BorderRadius.circular(kRadiusFull),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        // 与左侧「互相关注」胶囊高度一致（vertical 3 + 11px 字号）
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.circular(kRadiusFull),
@@ -458,7 +464,12 @@ class _RelationListPageState extends State<RelationListPage> {
               )
             : Text(
                 label,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+                style: TextStyle(
+                  fontSize: 11,
+                  // 已关注不加粗（与互相关注胶囊同权重）
+                  fontWeight: FontWeight.w400,
+                  color: fg,
+                ),
               ),
       ),
     );

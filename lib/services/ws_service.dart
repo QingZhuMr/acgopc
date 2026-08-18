@@ -80,6 +80,22 @@ class WsService {
   final _chatReadCtrl = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get onChatRead => _chatReadCtrl.stream;
 
+  /// 跨端已读同步流（收到 chat_read_sync：自己其他设备已读消息，用于清未读角标）
+  final _chatReadSyncCtrl = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onChatReadSync => _chatReadSyncCtrl.stream;
+
+  /// 消息撤回流（收到 chat_recall 推送，消息被撤回）
+  final _chatRecallCtrl = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onChatRecall => _chatRecallCtrl.stream;
+
+  /// 会话清空流（收到 chat_clear 推送，多端同步清除本地记录）
+  final _chatClearCtrl = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onChatClear => _chatClearCtrl.stream;
+
+  /// 对方输入状态流（收到 typing 推送）
+  final _typingCtrl = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onTyping => _typingCtrl.stream;
+
   /// 连接状态回调（可选，用于 UI 展示）
   void Function(bool connected)? onConnectionChange;
 
@@ -198,6 +214,21 @@ class WsService {
     }
   }
 
+  /// 发送输入状态（typing），服务端转发给接收方；不落库
+  void sendTyping({required int receiverId, required String chatId}) {
+    final ch = _channel;
+    if (ch == null || !isConnected || receiverId <= 0) return;
+    try {
+      ch.sink.add(jsonEncode({
+        'type': 'typing',
+        'receiver_id': receiverId,
+        'chat_id': chatId,
+      }));
+    } catch (_) {
+      // 发送失败静默
+    }
+  }
+
   void _onMessage(dynamic data) {
     final Map<String, dynamic>? msg;
     try {
@@ -272,6 +303,34 @@ class WsService {
         final read = msg['read'];
         if (read is Map<String, dynamic>) {
           _chatReadCtrl.add(read);
+        }
+        break;
+
+      case 'chat_read_sync':
+        final read = msg['read'];
+        if (read is Map<String, dynamic>) {
+          _chatReadSyncCtrl.add(read);
+        }
+        break;
+
+      case 'chat_recall':
+        final recall = msg['recall'];
+        if (recall is Map<String, dynamic>) {
+          _chatRecallCtrl.add(recall);
+        }
+        break;
+
+      case 'chat_clear':
+        final clear = msg['clear'];
+        if (clear is Map<String, dynamic>) {
+          _chatClearCtrl.add(clear);
+        }
+        break;
+
+      case 'typing':
+        final typing = msg['typing'];
+        if (typing is Map<String, dynamic>) {
+          _typingCtrl.add(typing);
         }
         break;
 

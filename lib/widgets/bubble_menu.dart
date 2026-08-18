@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 
@@ -56,11 +57,21 @@ class BubbleMenuManager {
 /// - 显示/消失带淡入 + 缩放动画
 /// - 点击气泡外部 / 鼠标滚动 / 再点触发图标时关闭
 class BubbleMenu extends StatefulWidget {
+  /// 菜单项（[content] 为空时渲染菜单项列表）
   final List<BubbleMenuItem> items;
+
+  /// 自定义面板内容（如表情面板）。非空时气泡内渲染 [content] 替代菜单项，
+  /// 用于弹出非菜单的扩展面板（配合 [width]/[panelHeight] 控制尺寸）。
+  final Widget? content;
+
+  /// [content] 面板的固定高度（气泡定位需预先知道总高度；默认 230）
+  final double panelHeight;
+
   final Widget child;
 
-  /// 气泡固定宽度
-  final double width;
+  /// 气泡宽度。null=根据最长菜单项文字自动计算（避免固定宽度截断文字）；
+  /// 传入数值则固定宽度（兼容省略号菜单等场景）
+  final double? width;
 
   /// 每个菜单项固定高度
   final double itemHeight;
@@ -80,51 +91,76 @@ class BubbleMenu extends StatefulWidget {
   /// 动画时长
   final Duration duration;
 
+  /// true=鼠标右键触发（桌面端右键菜单），false=点击触发（默认）
+  final bool triggerOnRightClick;
+
+  /// 打开/关闭状态回调（触发按钮图标高亮等 UI 联动）
+  final ValueChanged<bool>? onOpenChange;
+
   const BubbleMenu({
     super.key,
-    required this.items,
+    this.items = const [],
+    this.content,
+    this.panelHeight = 230,
     required this.child,
-    this.width = 96,
+    this.width,
     this.itemHeight = 34,
     this.verticalPadding = 6,
     this.arrowSize = 7,
     this.radius = kRadiusBtn,
     this.gap = 6,
     this.duration = const Duration(milliseconds: 150),
+    this.triggerOnRightClick = false,
+    this.onOpenChange,
   });
 
   @override
-  State<BubbleMenu> createState() => _BubbleMenuState();
+  State<BubbleMenu> createState() => BubbleMenuState();
 }
 
-class _BubbleMenuState extends State<BubbleMenu> {
+class BubbleMenuState extends State<BubbleMenu> {
   final GlobalKey _anchorKey = GlobalKey();
   _BubbleMenuOverlay? _overlay;
+
+  /// 触发时的指针全局坐标（右键/左键点击位置），用于菜单跟随鼠标
+  Offset? _triggerPos;
+
+  /// 是否已打开（用布尔量判断，避免 overlay 已 close 但引用未置空导致死状态）
+  bool _isOpen = false;
 
   @override
   void dispose() {
     _overlay?.close();
+    _isOpen = false;
     super.dispose();
   }
 
-  void _toggle() {
-    if (_overlay != null) {
-      _overlay!.close();
+  void _toggle([Offset? pos]) {
+    if (_isOpen) {
+      close();
     } else {
-      _openMenu();
+      _openMenu(pos);
     }
   }
 
-  void _openMenu() {
+  void _openMenu([Offset? pos]) {
+    // 防御：若残留旧 overlay，先关闭
+    _overlay?.close();
+    _overlay = null;
+    _isOpen = true;
+    _triggerPos = pos;
+    widget.onOpenChange?.call(true);
     final overlay = Overlay.of(context);
     setState(() => _overlay = _BubbleMenuOverlay.pending());
     // 通过 nextFrame 确保 anchor 已布局，再定位
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !_isOpen) return;
       final entry = OverlayEntry(
         builder: (ctx) => _BubbleMenuOverlayView(
           anchorKey: _anchorKey,
           items: widget.items,
+          content: widget.content,
+          panelHeight: widget.panelHeight,
           width: widget.width,
           itemHeight: widget.itemHeight,
           verticalPadding: widget.verticalPadding,
@@ -132,6 +168,7 @@ class _BubbleMenuState extends State<BubbleMenu> {
           radius: widget.radius,
           gap: widget.gap,
           duration: widget.duration,
+          triggerPosition: _triggerPos,
           onClosed: _onClosed,
         ),
       );
@@ -141,20 +178,39 @@ class _BubbleMenuState extends State<BubbleMenu> {
     });
   }
 
+  /// 关闭菜单（供 toggle 使用；onClosed 由菜单自身移除时回调）。
+  /// 对外公开：点击面板内容（如表情/表情包）后由外部调用收起气泡。
+  void close() {
+    _isOpen = false;
+    _triggerPos = null;
+    _overlay?.close();
+    _overlay = null;
+    widget.onOpenChange?.call(false);
+  }
+
   void _onClosed() {
     if (!mounted) return;
-    _overlay?.close(); // 移除 entry + 取消全局注册
-    if (_overlay != null) {
-      setState(() => _overlay = null);
-    }
+    close();
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    // 直接用 Listener 监听 PointerDownEvent，绕过 GestureRecognizer arena：
+    // - triggerOnRightClick：仅响应右键（左键穿透给 child 的 InkWell）
+    // - 默认：仅响应左键
+    // Listener 默认 HitTestBehavior.deferToChild，不影响子项命中测试
+    return Listener(
       key: _anchorKey,
-      behavior: HitTestBehavior.opaque,
-      onTap: _toggle,
+      onPointerDown: (event) {
+        if (widget.triggerOnRightClick) {
+          if (event.buttons == kSecondaryButton) {
+            _toggle(event.position);
+          }
+        } else if (event.buttons == kPrimaryButton) {
+          _toggle(event.position);
+        }
+      },
       child: widget.child,
     );
   }
@@ -174,21 +230,70 @@ class _BubbleMenuOverlay {
 }
 
 /// 气泡 Overlay 视图：全屏拦截 + 定位 + 动画
+/// 单个菜单项的内容宽度（图标 15 + 间距 6 + 文字宽）
+double _measureMenuItemWidth(BubbleMenuItem item) {
+  final label = item.label ?? '';
+  if (label.isEmpty) return 0;
+  final tp = TextPainter(
+    text: TextSpan(
+      text: label,
+      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400),
+    ),
+    maxLines: 1,
+    textDirection: TextDirection.ltr,
+  )..layout();
+  var w = tp.width;
+  if (item.icon != null) w += 15 + 6;
+  return w;
+}
+
+/// 所有菜单项内容宽度是否一致（一致 → 内容居中；不一致 → 左对齐）
+bool _menuItemsAlignCenter(List<BubbleMenuItem> items) {
+  double? first;
+  for (final item in items) {
+    final w = _measureMenuItemWidth(item);
+    if (w <= 0) continue;
+    if (first == null) {
+      first = w;
+    } else if ((w - first).abs() > 0.5) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// 按最长菜单项文字计算气泡宽度（完整显示不截断）：
+/// 文字宽度 + 图标(15) + 图标间距(6) + 水平 padding(12*2) + 项外边距(6*2)
+/// 结果 clamp 在 [84, 240]（太短贴图标、太长限制最大宽度）
+double _measureMenuWidth(List<BubbleMenuItem> items) {
+  var maxText = 0.0;
+  for (final item in items) {
+    final w = _measureMenuItemWidth(item);
+    if (w > maxText) maxText = w;
+  }
+  return (maxText + 24 + 12).clamp(84.0, 240.0);
+}
+
 class _BubbleMenuOverlayView extends StatelessWidget {
   final GlobalKey anchorKey;
   final List<BubbleMenuItem> items;
-  final double width;
+  final Widget? content;
+  final double panelHeight;
+  final double? width;
   final double itemHeight;
   final double verticalPadding;
   final double arrowSize;
   final double radius;
   final double gap;
   final Duration duration;
+  final Offset? triggerPosition;
   final VoidCallback onClosed;
 
   const _BubbleMenuOverlayView({
     required this.anchorKey,
     required this.items,
+    required this.content,
+    required this.panelHeight,
     required this.width,
     required this.itemHeight,
     required this.verticalPadding,
@@ -196,6 +301,7 @@ class _BubbleMenuOverlayView extends StatelessWidget {
     required this.radius,
     required this.gap,
     required this.duration,
+    required this.triggerPosition,
     required this.onClosed,
   });
 
@@ -217,30 +323,51 @@ class _BubbleMenuOverlayView extends StatelessWidget {
           anchorBox.size.height,
         );
 
-        final contentHeight = items.length * itemHeight + verticalPadding * 2;
+        // 面板内容：使用固定 panelHeight；菜单项：按项数计算
+        final contentHeight = content != null
+            ? panelHeight
+            : items.length * itemHeight + verticalPadding * 2;
         // 总高度 = 内容 + 框外小三角占位
         final bubbleHeight = contentHeight + arrowSize;
+        // 宽度：固定值则用固定值；null 按最长菜单项文字自动计算（完整显示不截断）
+        final bubbleWidth =
+            width ?? _measureMenuWidth(items);
+        // 内容对齐：所有菜单项内容宽度一致 → 居中；不一致 → 左对齐
+        final alignCenter = _menuItemsAlignCenter(items);
 
+        // 参考点：有指针坐标（右键/左键位置）则跟随鼠标，否则对齐 anchor
+        final ref = triggerPosition;
         // 方向：下方空间不足则向上（按总高度判断）
-        final spaceBelow = overlaySize.height - anchorRect.bottom;
-        final spaceAbove = anchorRect.top;
+        final spaceBelow =
+            ref != null ? overlaySize.height - ref.dy : overlaySize.height - anchorRect.bottom;
+        final spaceAbove = ref != null ? ref.dy : anchorRect.top;
         final showDown =
             spaceBelow >= bubbleHeight + gap || spaceBelow >= spaceAbove;
 
-        final top = showDown
-            ? anchorRect.bottom + gap - arrowSize // 三角尖贴 anchor 底部，矩形本体在三角下方
-            : anchorRect.top - bubbleHeight - gap;
+        final double topRaw;
+        if (ref != null) {
+          // 跟随鼠标：气泡本体直接出现在指针下方/上方
+          topRaw = showDown ? ref.dy + gap : ref.dy - bubbleHeight - gap;
+        } else {
+          // 对齐 anchor：三角尖贴 anchor 底部，矩形本体在三角下方
+          topRaw = showDown
+              ? anchorRect.bottom + gap - arrowSize
+              : anchorRect.top - bubbleHeight - gap;
+        }
+        // 垂直 clamp，避免超出屏幕（考虑小三角占位）
+        final maxTop = (overlaySize.height - bubbleHeight - 8.0).clamp(8.0, overlaySize.height);
+        final top = topRaw.clamp(8.0, maxTop);
 
-        // 水平：箭头默认对齐 anchor 中心，气泡不越界
-        final targetX = anchorRect.center.dx;
-        var left = targetX - width / 2;
+        // 水平：箭头默认对齐指针/anchor 中心，气泡不越界
+        final targetX = ref?.dx ?? anchorRect.center.dx;
+        var left = targetX - bubbleWidth / 2;
         final minLeft = 8.0;
-        final maxLeft = overlaySize.width - width - 8;
+        final maxLeft = overlaySize.width - bubbleWidth - 8;
         if (left > maxLeft) left = maxLeft;
         if (left < minLeft) left = minLeft;
 
         final arrowCenterDx =
-            (targetX - left).clamp(arrowSize, width - arrowSize);
+            (targetX - left).clamp(arrowSize, bubbleWidth - arrowSize);
 
         final bubbleKey = GlobalKey<_AnimatedBubbleState>();
         return Stack(
@@ -263,7 +390,7 @@ class _BubbleMenuOverlayView extends StatelessWidget {
               top: top,
               child: _AnimatedBubble(
                 key: bubbleKey,
-                width: width,
+                width: bubbleWidth,
                 height: bubbleHeight,
                 contentHeight: contentHeight,
                 arrowSize: arrowSize,
@@ -271,9 +398,11 @@ class _BubbleMenuOverlayView extends StatelessWidget {
                 arrowCenterDx: arrowCenterDx,
                 arrowPointUp: showDown,
                 items: items,
+                content: content,
                 itemHeight: itemHeight,
                 verticalPadding: verticalPadding,
                 duration: duration,
+                alignCenter: alignCenter,
                 onDismissed: onClosed,
               ),
             ),
@@ -294,9 +423,13 @@ class _AnimatedBubble extends StatefulWidget {
   final double arrowCenterDx; // 箭头水平中心相对气泡 left 的偏移
   final bool arrowPointUp; // true=三角在顶部（气泡在 anchor 下方）
   final List<BubbleMenuItem> items;
+
+  /// 自定义面板内容（非空时替代菜单项渲染）
+  final Widget? content;
   final double itemHeight;
   final double verticalPadding;
   final Duration duration;
+  final bool alignCenter;
   final VoidCallback onDismissed;
 
   const _AnimatedBubble({
@@ -309,9 +442,11 @@ class _AnimatedBubble extends StatefulWidget {
     required this.arrowCenterDx,
     required this.arrowPointUp,
     required this.items,
+    required this.content,
     required this.itemHeight,
     required this.verticalPadding,
     required this.duration,
+    required this.alignCenter,
     required this.onDismissed,
   });
 
@@ -384,20 +519,29 @@ class _AnimatedBubbleState extends State<_AnimatedBubble>
                 (widget.arrowPointUp ? 0 : widget.arrowSize) +
                     widget.verticalPadding,
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var i = 0; i < widget.items.length; i++)
-                    _MenuItemTile(
-                      item: widget.items[i],
-                      height: widget.itemHeight,
-                      onTap: () {
-                        widget.items[i].onTap?.call();
-                        beginClose();
-                      },
+              // 面板内容（表情等）→ 直接渲染；否则渲染菜单项列表。
+              // Overlay 中无 Material 祖先，content 内的 InkWell（如表情面板）会崩，
+              // 故包一层透明 Material（不影响视觉，splash 正常显示）
+              child: widget.content != null
+                  ? Material(
+                      type: MaterialType.transparency,
+                      child: widget.content!,
+                    )
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var i = 0; i < widget.items.length; i++)
+                          _MenuItemTile(
+                            item: widget.items[i],
+                            height: widget.itemHeight,
+                            alignCenter: widget.alignCenter,
+                            onTap: () {
+                              widget.items[i].onTap?.call();
+                              beginClose();
+                            },
+                          ),
+                      ],
                     ),
-                ],
-              ),
             ),
           ),
         ),
@@ -495,11 +639,15 @@ class _BubblePainter extends CustomPainter {
 class _MenuItemTile extends StatefulWidget {
   final BubbleMenuItem item;
   final double height;
+
+  /// true=所有菜单项内容宽度一致，居中显示；false=宽窄不一，左对齐
+  final bool alignCenter;
   final VoidCallback onTap;
 
   const _MenuItemTile({
     required this.item,
     required this.height,
+    required this.alignCenter,
     required this.onTap,
   });
 
@@ -533,21 +681,28 @@ class _MenuItemTileState extends State<_MenuItemTile> {
             borderRadius: BorderRadius.circular(kRadiusBtn),
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+            // 内容宽度一致 → 居中；宽窄不一 → 左对齐
+            mainAxisAlignment: widget.alignCenter
+                ? MainAxisAlignment.center
+                : MainAxisAlignment.start,
             children: [
               if (widget.item.icon != null) ...[
                 Icon(widget.item.icon, size: 15, color: color),
                 const SizedBox(width: 6),
               ],
               if (widget.item.label != null)
-                Text(
-                  widget.item.label!,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: color,
-                    fontWeight: FontWeight.w400,
-                    decoration: TextDecoration.none,
-                    decorationColor: Colors.transparent,
+                Flexible(
+                  child: Text(
+                    widget.item.label!,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: color,
+                      fontWeight: FontWeight.w400,
+                      decoration: TextDecoration.none,
+                      decorationColor: Colors.transparent,
+                    ),
                   ),
                 ),
             ],

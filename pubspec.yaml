@@ -28,6 +28,7 @@ dependencies:
   sqflite_common_ffi: ^2.3.3
   path: ^1.9.0
   asn1lib: ^1.6.5
+  image: ^4.9.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
