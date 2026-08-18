@@ -39,7 +39,7 @@ import 'widgets/pick_images.dart';
 import 'pages/post_detail_page.dart';
 import 'pages/privacy_settings_page.dart';
 import 'pages/publish_post_page.dart';
-import 'pages/user_profile_page.dart';
+import 'widgets/report_dialog.dart';
 import 'services/secure_storage.dart';
 import 'pages/splash_page.dart';
 import 'services/theme_controller.dart';
@@ -2799,6 +2799,375 @@ class _ProfileViewState extends State<_ProfileView> {
     if (result == true && mounted) {
       widget.onLogout();
     }
+  }
+}
+
+/// 他人个人中心页（也可查看自己公开主页）
+///
+/// 由帖子详情页点击头像/昵称/@昵称进入（内容区覆盖，`_HomePageState.openUserProfile`）。
+/// 样式与「我的」页一致（复用 `_PageScaffold`/`_UserAvatar`/`_ProfileTab`/`_MasonryGrid`
+/// 等组件），仅无编辑入口、无熊爪余额；右上角省略号气泡菜单 = 举报。
+///
+/// 隐私规则：对方将动态/收藏设为「仅自己」时接口返回 `visible=0`，展示锁占位。
+class UserProfilePage extends StatefulWidget {
+  /// 目标用户 ID
+  final int targetUid;
+
+  /// 初始昵称
+  final String nickname;
+
+  /// 初始头像
+  final String avatar;
+
+  /// 是否以内嵌模式展示（内容区覆盖，保留左侧导航栏）
+  final bool embedded;
+
+  /// 内嵌模式下返回回调（由宿主清空覆盖层）
+  final VoidCallback? onBack;
+
+  const UserProfilePage({
+    super.key,
+    required this.targetUid,
+    required this.nickname,
+    required this.avatar,
+    this.embedded = false,
+    this.onBack,
+  });
+
+  @override
+  State<UserProfilePage> createState() => _UserProfilePageState();
+}
+
+class _UserProfilePageState extends State<UserProfilePage> {
+  int _tab = 0; // 0=动态 1=收藏
+  List<Map<String, dynamic>> _posts = [];
+  List<Map<String, dynamic>> _favorites = [];
+  bool _loadingPosts = true;
+  bool _loadingFavs = true;
+  bool _postsVisible = true; // visible=0 表示对方设了隐私
+  bool _favsVisible = true;
+  bool _failedPosts = false;
+  bool _failedFavs = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPosts();
+    _loadFavorites();
+  }
+
+  Future<void> _loadPosts() async {
+    setState(() {
+      _loadingPosts = true;
+      _posts = [];
+      _postsVisible = true;
+      _failedPosts = false;
+    });
+    try {
+      final resp = await ApiClient.instance.getMyPosts(
+        targetUid: widget.targetUid,
+        page: 1,
+        pageSize: 12,
+      );
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (!mounted) return;
+      if (json['code'] != 0) {
+        NotifyStack.warning(json['msg']?.toString() ?? '加载失败', title: '提示');
+        setState(() {
+          _loadingPosts = false;
+          _failedPosts = true;
+        });
+        return;
+      }
+      final data = (json['data'] as Map<String, dynamic>?) ?? {};
+      final list = (data['list'] as List<dynamic>?) ?? [];
+      setState(() {
+        _posts =
+            list.map((e) => (e as Map<String, dynamic>?) ?? {}).toList();
+        _postsVisible = (data['visible'] ?? 1) == 1;
+        _loadingPosts = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      NotifyStack.warning('动态加载失败，请稍后重试', title: '提示');
+      setState(() {
+        _loadingPosts = false;
+        _failedPosts = true;
+      });
+    }
+  }
+
+  Future<void> _loadFavorites() async {
+    setState(() {
+      _loadingFavs = true;
+      _favorites = [];
+      _favsVisible = true;
+      _failedFavs = false;
+    });
+    try {
+      final resp = await ApiClient.instance.getMyFavorites(
+        targetUid: widget.targetUid,
+        page: 1,
+        pageSize: 12,
+      );
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (!mounted) return;
+      if (json['code'] != 0) {
+        NotifyStack.warning(json['msg']?.toString() ?? '加载失败', title: '提示');
+        setState(() {
+          _loadingFavs = false;
+          _failedFavs = true;
+        });
+        return;
+      }
+      final data = (json['data'] as Map<String, dynamic>?) ?? {};
+      final list = (data['list'] as List<dynamic>?) ?? [];
+      setState(() {
+        _favorites =
+            list.map((e) => (e as Map<String, dynamic>?) ?? {}).toList();
+        _favsVisible = (data['visible'] ?? 1) == 1;
+        _loadingFavs = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      NotifyStack.warning('收藏加载失败，请稍后重试', title: '提示');
+      setState(() {
+        _loadingFavs = false;
+        _failedFavs = true;
+      });
+    }
+  }
+
+  /// 举报该用户
+  void _reportUser() {
+    showDialog(
+      context: context,
+      builder: (_) => ReportDialog(
+        targetUid: widget.targetUid,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final b = Theme.of(context).brightness;
+    return _PageScaffold(
+      title: widget.nickname,
+      actions: [
+        // 右上角省略号：气泡弹出举报
+        BubbleMenu(
+          width: 140,
+          items: [
+            BubbleMenuItem(
+              label: '举报',
+              icon: Icons.flag_outlined,
+              color: kDanger,
+              onTap: _reportUser,
+            ),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Icon(Icons.more_horiz, size: 22, color: textColor(b)),
+          ),
+        ),
+        if (widget.embedded)
+          // 内容区覆盖模式下显示返回按钮（紧跟省略号）
+          Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: IconButton(
+              tooltip: '返回',
+              icon: Icon(Icons.arrow_back_ios_new_rounded,
+                  size: 16, color: textMutedColor(b)),
+              onPressed: () {
+                if (widget.onBack != null) {
+                  widget.onBack!();
+                } else {
+                  Navigator.of(context).maybePop();
+                }
+              },
+            ),
+          ),
+      ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return NotificationListener<ScrollNotification>(
+            onNotification: (n) {
+              // 他人主页暂无分页加载（骨架迭代）
+              return false;
+            },
+            child: SilkySingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              scrollSpeed: 1.6,
+              silkyScrollDuration: const Duration(milliseconds: 600),
+              animationCurve: Curves.easeOutCubic,
+              child: ConstrainedBox(
+                constraints:
+                    BoxConstraints(minHeight: constraints.maxHeight - 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // ===== 用户信息卡（头像 + 昵称 + UID，无编辑入口） =====
+                    Card(
+                      elevation: 0,
+                      color: bgHoverColor(b),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(kRadiusBtn),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            _UserAvatar(
+                              avatarUrl: widget.avatar.isEmpty
+                                  ? null
+                                  : AppConfig.resolveUrl(widget.avatar),
+                              nickname: widget.nickname,
+                              size: 56,
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          widget.nickname,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w600,
+                                            color: textColor(b),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'UID：${widget.targetUid}',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: textMutedColor(b),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // ===== 动态 / 收藏 tab =====
+                    Row(
+                      children: [
+                        _ProfileTab(
+                          label: '动态',
+                          count: _posts.length,
+                          selected: _tab == 0,
+                          onTap: () => setState(() => _tab = 0),
+                        ),
+                        const SizedBox(width: 8),
+                        _ProfileTab(
+                          label: '收藏',
+                          count: _favorites.length,
+                          selected: _tab == 1,
+                          onTap: () => setState(() => _tab = 1),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // ===== tab 内容 =====
+                    _buildTabContent(b, constraints),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildTabContent(Brightness b, BoxConstraints constraints) {
+    final isPosts = _tab == 0;
+    final loading = isPosts ? _loadingPosts : _loadingFavs;
+    final failed = isPosts ? _failedPosts : _failedFavs;
+    final list = isPosts ? _posts : _favorites;
+    final visible = isPosts ? _postsVisible : _favsVisible;
+    final columns = _profileColumns(constraints.maxWidth);
+
+    if (loading) {
+      return _SkeletonGrid(columns: columns);
+    }
+    if (failed) {
+      return _FavRetry(
+        label: isPosts ? '动态加载失败' : '收藏加载失败',
+        onRetry: () => isPosts ? _loadPosts() : _loadFavorites(),
+      );
+    }
+    if (!visible) {
+      // 对方设了隐私
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 48),
+        decoration: BoxDecoration(
+          color: bgHoverColor(b),
+          borderRadius: BorderRadius.circular(kRadiusMd),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.lock_outline, size: 40, color: textMutedColor(b)),
+            const SizedBox(height: 12),
+            Text(
+              isPosts ? '对方将「动态」设为仅自己可见' : '对方将「收藏」设为仅自己可见',
+              style: TextStyle(fontSize: 14, color: textMutedColor(b)),
+            ),
+          ],
+        ),
+      );
+    }
+    if (list.isEmpty) {
+      return _EmptyFavorites(
+        b: b,
+        icon: isPosts ? Icons.dynamic_feed_outlined : Icons.bookmark_border,
+        title: isPosts ? '还没有发布任何动态' : '还没有收藏任何帖子',
+        subtitle: '',
+      );
+    }
+    return _MasonryGrid(
+      posts: list,
+      columns: columns,
+      coverHeight: _profileCoverHeight,
+      onPostTap: (p) => _openPostInContent(p),
+    );
+  }
+
+  /// 列数算法（与个人中心一致）
+  int _profileColumns(double width) {
+    const minCardWidth = 240.0;
+    const gap = 12.0;
+    final n = ((width + gap) / (minCardWidth + gap)).floor();
+    return n.clamp(1, 6).toInt();
+  }
+
+  /// 封面高度（与个人中心一致）
+  double _profileCoverHeight(Map<String, dynamic> post) {
+    final id = (post['id'] as num?)?.toInt() ?? 0;
+    final content = post['content']?.toString() ?? '';
+    final images = (post['images'] as List<dynamic>?) ?? const [];
+    final seed = ((id * 31 + content.length + images.length) % 100).abs();
+    return 170 + seed % 119; // 落在 [170, 288]
+  }
+
+  /// 点击帖子卡片 → 在内容区打开详情
+  void _openPostInContent(Map<String, dynamic> p) {
+    final id = (p['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return;
+    _HomePageState.current?.openPostFullInContent(p, id);
   }
 }
 

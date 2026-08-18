@@ -403,26 +403,31 @@ class ApiClient {
     );
   }
 
-  /// 举报帖子 / 评论（业务接口）
+  /// 举报用户 / 帖子 / 评论（业务接口）
+  ///
+  /// 举报用户传 targetUid（>0）；举报帖子传 postId；举报评论传 postId + commentId。
   Future<http.Response> report({
-    required int postId,
+    int targetUid = 0,
+    int postId = 0,
     int commentId = 0,
     required String reason,
     String content = '',
   }) {
     final path = '/post/report';
+    final body = <String, String>{
+      'reason': reason,
+      'content': content,
+      if (targetUid > 0) 'target_uid': '$targetUid',
+      if (postId > 0) 'post_id': '$postId',
+      if (commentId > 0) 'comment_id': '$commentId',
+    };
     return http.post(
       Uri.parse(AppConfig.api(path)),
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
       },
-      body: {
-        'post_id': '$postId',
-        'comment_id': '$commentId',
-        'reason': reason,
-        'content': content,
-      },
+      body: body,
     );
   }
 
