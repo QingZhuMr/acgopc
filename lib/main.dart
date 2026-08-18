@@ -263,6 +263,8 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
     final uid = _resolveCurrentUid(user);
     if (uid > 0) {
       ChatStore.instance.openForUser(uid);
+      // 串号兜底：清除本账号库中不属于当前账号的历史脏数据（防会话列表串号残留）
+      unawaited(ChatStore.instance.pruneForeignData(uid));
       // 发帖草稿按账号隔离（draft/<uid>/）
       PostDraftStore.instance.openForUser(uid);
       // 尽早初始化聊天服务（设置 _userId，WS 消息到达前即正确计算会话归属）

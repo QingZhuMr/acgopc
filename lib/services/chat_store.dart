@@ -66,6 +66,65 @@ class ChatStore {
     }
   }
 
+  /// 串号兜底清理（登录后调用）：删除当前账号库中**不属于本账号**的脏数据。
+  ///
+  /// 背景：早期版本切换账号时，上个账号残留的 WS/sync 任务可能把消息写入
+  /// 新账号库（chat_id 为他人会话）。身份校验已堵住新增，但历史脏数据
+  /// 需要兜底清除，否则会话列表会出现"别人的会话"。
+  /// 判定规则：chat_id 格式 `min_max`，拆出双方 id，**只要有一方是当前 uid**
+  /// 即视为本账号数据（保留），双方都不是 → 脏数据删除。
+  Future<void> pruneForeignData(int uid) async {
+    if (uid <= 0) return;
+    try {
+      final db = await _database;
+      if (_dbUid != uid) return; // 连接不属于该账号则跳过（防误删）
+
+      // 1) 清理消息
+      final msgs = await db.query('local_chat_message',
+          columns: ['id', 'chat_id']);
+      final deadMsgIds = <int>[];
+      for (final row in msgs) {
+        final chatId = row['chat_id']?.toString() ?? '';
+        if (chatId.isEmpty) continue;
+        if (!_chatBelongsTo(chatId, uid)) {
+          deadMsgIds.add(row['id'] as int);
+        }
+      }
+      for (final id in deadMsgIds) {
+        await db.delete('local_chat_message',
+            where: 'id = ?', whereArgs: [id]);
+      }
+
+      // 2) 清理会话
+      final convs = await db.query('local_conversation',
+          columns: ['chat_id']);
+      for (final row in convs) {
+        final chatId = row['chat_id']?.toString() ?? '';
+        if (chatId.isEmpty) continue;
+        if (!_chatBelongsTo(chatId, uid)) {
+          await db.delete('local_conversation',
+              where: 'chat_id = ?', whereArgs: [chatId]);
+        }
+      }
+
+      if (deadMsgIds.isNotEmpty) {
+        _notifyUnreadChanged();
+      }
+    } catch (_) {
+      // 兜底清理失败不影响主流程（下次登录再试）
+    }
+  }
+
+  /// chat_id（`min_max`）是否属于 [uid]：拆出双方 id，至少一方等于 uid
+  bool _chatBelongsTo(String chatId, int uid) {
+    final parts = chatId.split('_');
+    if (parts.length != 2) return false;
+    final a = int.tryParse(parts[0]);
+    final b = int.tryParse(parts[1]);
+    if (a == null || b == null) return false;
+    return a == uid || b == uid;
+  }
+
   Future<Database> get _database async {
     // 连接与当前账号匹配 → 直接复用
     if (_db != null && _dbUid == _uid) return _db!;
@@ -349,6 +408,7 @@ class ChatStore {
     required int sendStatus, // 0发送中 1已发送 2失败
     required int createTime,
     String imageLocalPath = '',
+    int readStatus = 0, // 0未读 1对方已读（仅自己发出的消息有意义）
   }) async {
     final db = await _database;
     if (clientMsgId.isEmpty) {
@@ -367,6 +427,10 @@ class ChatStore {
         'send_status': sendStatus,
         if (seq > 0) 'seq': seq,
         if (signature.isNotEmpty) 'signature': signature,
+        // 已读状态以服务端为准：拉取/推送都可能带来更新的已读游标
+        if (readStatus >
+            ((exists.first['read_status'] as num?)?.toInt() ?? 0))
+          'read_status': readStatus,
       };
       // 明文为空时补明文（首次解密落库）
       if (plaintext.isNotEmpty && (exists.first['plaintext'] as String? ?? '').isEmpty) {
@@ -400,6 +464,7 @@ class ChatStore {
       'send_status': sendStatus,
       'create_time': createTime,
       'image_local_path': imageLocalPath,
+      'read_status': readStatus,
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
     return true;
   }

@@ -391,6 +391,8 @@ class ChatService {
     // 本地已删除的消息：跳过（多选删除为仅本设备删除，防止"复活"）
     if (await ChatStore.instance.isMsgDeleted(msgId)) return;
 
+    // 对方是否已读（服务端按 chat_read 游标计算，离线/切号拉取也能恢复）
+    final peerRead = (msg['peer_read'] as num?)?.toInt() ?? 0;
     final inserted = await ChatStore.instance.upsertMessage(
       chatId: chatId,
       msgId: msgId,
@@ -406,6 +408,7 @@ class ChatService {
       ephemeralPub: ephem,
       sendStatus: 1,
       createTime: createTime,
+      readStatus: peerRead,
     );
     // 新收到的对方消息 → 离线消息通知（WS 实时 / 断线 sync 都走这里，
     // 只有真正新插入才通知，天然去重；正在查看该会话时不弹）
@@ -509,6 +512,8 @@ class ChatService {
           ephemeralPub: ephem,
           sendStatus: 1,
           createTime: (m['create_time'] as num?)?.toInt() ?? 0,
+          // 对方是否已读（history 返回 peer_read，离线/切号拉取恢复已读状态）
+          readStatus: (m['peer_read'] as num?)?.toInt() ?? 0,
         );
         // 图片消息：异步下载本地缓存（历史记录读本地，不再回云端）
         final mType = (m['msg_type'] as num?)?.toInt() ?? 1;
