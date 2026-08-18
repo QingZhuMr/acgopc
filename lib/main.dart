@@ -541,6 +541,12 @@ class _HomePageState extends State<HomePage> {
     NotificationCenter.instance.addListener(_onNotifyChanged);
     // 监听聊天未读变化（收到消息/打开会话清零/跨端已读 → 刷新消息 tab 角标）
     ChatStore.instance.chatUnreadTick.addListener(_onChatUnreadChanged);
+    // 启动兜底清理：清除当前账号库中不属于本账号的串号脏数据
+    // （已登录场景无需重新登录，重启应用即可触发）
+    final uid = _resolveUid(widget.user);
+    if (uid > 0) {
+      unawaited(ChatStore.instance.pruneForeignData(uid));
+    }
   }
 
   @override
