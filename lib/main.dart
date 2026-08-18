@@ -3786,38 +3786,48 @@ class _UserProfilePageState extends State<UserProfilePage> {
     if (widget.embedded) {
       return SizedBox(
         height: 48,
+        width: double.infinity, // 显式撑满 cross axis，防止父约束 loose 时 Row 收缩为内容宽
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
+            mainAxisSize: MainAxisSize.max,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // macOS 风格返回按钮
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(kRadiusMd),
-                  onTap: () {
-                    if (widget.onBack != null) {
-                      widget.onBack!();
-                    } else {
-                      Navigator.of(context).maybePop();
-                    }
-                  },
-                  mouseCursor: SystemMouseCursors.click,
-                  hoverColor: bgHoverColor(b),
-                  child: Center(
-                    // 图标下移 1px，与 15px 标题文字视觉中线对齐（Material 箭头基线偏上）
-                    child: Transform.translate(
-                      offset: const Offset(0, 1),
-                      child: Icon(Icons.arrow_back_ios_new_rounded,
-                          size: 16, color: textMutedColor(b)),
+              // 左侧：返回按钮 + 标题（同一组靠左）
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // macOS 风格返回按钮
+                  SizedBox(
+                    width: 40,
+                    height: 40,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(kRadiusMd),
+                      onTap: () {
+                        if (widget.onBack != null) {
+                          widget.onBack!();
+                        } else {
+                          Navigator.of(context).maybePop();
+                        }
+                      },
+                      mouseCursor: SystemMouseCursors.click,
+                      hoverColor: bgHoverColor(b),
+                      child: Center(
+                        child: Transform.translate(
+                          offset: const Offset(0, 1),
+                          child: Icon(Icons.arrow_back_ios_new_rounded,
+                              size: 16, color: textMutedColor(b)),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  const SizedBox(width: 4),
+                  Flexible(child: title),
+                ],
               ),
-              // title 用 Expanded 占满中间空隙，省略号稳定靠右。
-              // （原 Flexible+Spacer 在部分路径/约束下 Spacer 可能失效导致省略号靠左）
-              Expanded(child: title),
+              // 右侧：省略号（spaceBetween 强制靠右）
               // 右上角省略号：气泡弹出举报
               BubbleMenu(
                 width: 140,
