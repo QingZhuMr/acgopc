@@ -346,7 +346,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - **入口**（`main.dart` 内 `UserProfilePage`，内容区覆盖打开，`embedded: true`，保留左侧导航栏）：帖子详情页**点击他人头像/昵称**、评论里**@昵称（含楼中楼）**进入。由 `_HomePageState.openUserProfile(uid, nickname, avatar)` 实现。
 - **标题栏**：与帖子详情页等**二级页面一致**（embedded：高 48、水平 8px、macOS 风格返回按钮 40x40/`kRadiusMd` 圆角/`arrow_back_ios_new_rounded` 16px、标题 15px/w600）；**标题 = 「昵称的主页」**；右上角省略号 `BubbleMenu` = 举报。
 - **内容**：用户信息卡（头像 56px 圆形 + 昵称 18px/w600 + UID）+ **关注按钮**（信息卡右侧）：
-  - 未关注：`kPrimary` 蓝底白字「关注」；已关注：`bgHoverColor` 底普通字「已关注」；互相关注：`bgHoverColor` 底「互相关注」
+  - 未关注：`kPrimary` 蓝底白字「关注」；已关注：**胶囊**（`kRadiusFull`）+ **左侧导航栏背景色 `bgSoftColor`**「已关注」；互相关注：胶囊 + `bgSoftColor`「互相关注」
   - 进入页面加载关注状态（`followStatus`），点击切换（`follow`），忙碌态转圈
   - + **动态/收藏双 tab**（胶囊切换，`primarySoft` 底选中 + `kPrimary` 字）。
   - 数据源：`GET /api/post/myPosts`、`/api/post/favorites` 带 `target_uid`。
