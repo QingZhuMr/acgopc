@@ -2023,23 +2023,16 @@ class MessagePageState extends State<MessagePage> {
     await _loadConversations();
   }
 
-  /// 清空聊天记录：清本地 + 调后端清服务器缓存 + WS 多端同步
+  /// 清空聊天记录：仅清除本地聊天记录（不传送到服务器/不通知对方设备）
   Future<void> _confirmClearChat(int peerId, String chatId) async {
     final ok = await AppDialog.confirm(
       context,
       title: '清空聊天记录',
-      message: '将同时清除本地和服务器缓存中的聊天记录（双方设备同步清空）。\n确定清空吗？',
+      message: '将清除本设备上的聊天记录，不影响对方。\n确定清空吗？',
       confirmText: '清空',
       danger: true,
     );
     if (ok != true || !mounted) return;
-    try {
-      await ApiClient.instance
-          .clearChat(peerId: peerId)
-          .timeout(const Duration(seconds: 8));
-    } catch (_) {
-      // 后端失败不阻塞本地清空
-    }
     await ChatStore.instance.clearChatMessages(chatId);
     if (_selectedFriend?['user_id'] == peerId && mounted) {
       setState(() {
@@ -2932,10 +2925,10 @@ class MessagePageState extends State<MessagePage> {
 
     final bubbleColor = isMine ? kPrimary : bgHoverColor(b);
     final textColorB = isMine ? Colors.white : textColor(b);
-    // 撤回时限以服务器时间为准（本地时钟与服务器有偏差时判定一致）
+    // 撤回时限以服务器时间为准（本地时钟与服务器有偏差时判定一致），2 分钟内可撤回
     final serverNow =
         DateTime.now().millisecondsSinceEpoch ~/ 1000 + ChatService.serverTimeOffsetSec;
-    final canRecall = isMine && msgId > 0 && (serverNow - createTime) <= 300;
+    final canRecall = isMine && msgId > 0 && (serverNow - createTime) <= 120;
 
     // 引用消息：解析 body 取 (引用信息, 实际文本)
     final (quote, text) = _parseBody(plaintext);
@@ -3514,7 +3507,7 @@ class MessagePageState extends State<MessagePage> {
     // 用户取消（null）不提示；失败也 null，静默即可
   }
 
-  /// 撤回消息（5 分钟时限，调后端后本地标记撤回）
+  /// 撤回消息（2 分钟时限，调后端后本地标记撤回）
   Future<void> _recallMessage(Map<String, dynamic> m) async {
     final friend = _selectedFriend;
     final peerId = (friend?['user_id'] as num?)?.toInt() ?? 0;
