@@ -171,23 +171,28 @@ class ChatStore {
     return merged;
   }
 
-  /// chat_id（`min_max`）是否属于 [uid]：拆出双方 id，至少一方等于 uid
+  /// chat_id（`min_max`）是否属于 [uid]：拆出双方 id，至少一方等于 uid。
+  /// **min==max（自己和自己）一定是脏数据**（聊天双方不可能相同），
+  /// 即使其中一方等于 uid 也返回 false（历史 bug：接收方场景用
+  /// `_chatId(uid, uid)` 算出 `19_19` 这种错误会话）。
   bool _chatBelongsTo(String chatId, int uid) {
     final parts = chatId.split('_');
     if (parts.length != 2) return false;
     final a = int.tryParse(parts[0]);
     final b = int.tryParse(parts[1]);
     if (a == null || b == null) return false;
+    if (a == b) return false; // 自己和自己聊天：脏数据
     return a == uid || b == uid;
   }
 
-  /// 从 chat_id 拆出对端 id（peer）；chat_id 非法或双方之一等于 uid。
+  /// 从 chat_id 拆出对端 id（peer）；chat_id 非法、双方相同、或双方都不含 uid → null。
   int? _peerOfChatId(String chatId, int uid) {
     final parts = chatId.split('_');
     if (parts.length != 2) return null;
     final a = int.tryParse(parts[0]);
     final b = int.tryParse(parts[1]);
     if (a == null || b == null) return null;
+    if (a == b) return null; // 自己和自己：脏数据
     if (a == uid) return b;
     if (b == uid) return a;
     return null;
