@@ -342,20 +342,21 @@ for /L %%i in (1,1,30) do (
 :done_wait
 rem 静默解压 zip 覆盖安装目录
 powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${installDir}' -Force"
-rem 定位新 exe（解压后可能是主 exe 或子目录，递归取第一个 exe）
-set "NEW_EXE="
-for /R "${installDir}" %%f in (*.exe) do (
-  if /I "%%f" NEQ "${exePath}" (
-    if not defined NEW_EXE set "NEW_EXE=%%f"
-  )
-)
 rem 创建桌面快捷方式"耶熊"（带图标，Win10/11 通知提示显示 ICO 依赖快捷方式）
 powershell -NoProfile -Command "\$ws = New-Object -ComObject WScript.Shell; \$desktop = [Environment]::GetFolderPath('Desktop'); \$lnk = \$ws.CreateShortcut((Join-Path \$desktop '${AppConfig.appName}.lnk')); \$lnk.TargetPath = '${installDir}\${exeName}'; \$lnk.WorkingDirectory = '${installDir}'; \$lnk.IconLocation = '${installDir}\${exeName},0'; \$lnk.Save()"
-rem 启动新 exe
+rem 递归定位 exe（覆盖安装后 zip 里的 exe 已解压；取第一个 exe，
+rem 不排除旧 exe——覆盖安装后旧 exe 即新版本，排除会导致找不到而无法启动）
+set "NEW_EXE="
+for /R "${installDir}" %%f in (*.exe) do (
+  if not defined NEW_EXE (
+    set "NEW_EXE=%%f"
+    goto :launched
+  )
+)
+:launched
+rem 启动新 exe（delayed expansion 不需要：goto 跳出循环后 %NEW_EXE% 已定值）
 if defined NEW_EXE (
   start "" "%NEW_EXE%"
-) else (
-  start "" "${installDir}\${exeName}"
 )
 rem 静默删除下载的 zip 与安装脚本
 del /f /q "${zipPath}" >nul 2>&1
