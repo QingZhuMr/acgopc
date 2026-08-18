@@ -231,9 +231,23 @@ class ChatStore {
   }
 
   Future<Database> _openDb(String fileName) async {
-    final dir = await getDatabasesPath();
+    // 数据库统一放在应用数据目录（AppConfig.dataDir），与缓存/配置一致。
+    // 首次使用前从旧默认路径（getDatabasesPath）迁移已存在的账号库，避免丢数据。
+    final dir = AppConfig.dataDir;
+    final target = p.join(dir, fileName);
+    // 目标不存在但旧路径存在 → 迁移
+    if (!File(target).existsSync()) {
+      try {
+        final legacyDir = await getDatabasesPath();
+        final legacy = p.join(legacyDir, fileName);
+        if (File(legacy).existsSync()) {
+          File(legacy).copySync(target);
+          // 忽略 wal/shm 临时文件
+        }
+      } catch (_) {}
+    }
     return openDatabase(
-      p.join(dir, fileName),
+      target,
       version: 8,
       onCreate: (db, version) async {
         await db.execute('''
