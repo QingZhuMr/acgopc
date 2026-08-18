@@ -462,6 +462,53 @@ class ApiClient {
     );
   }
 
+  /// 我关注的列表（业务接口）
+  ///
+  /// 返回 data：{ list[]{ user_id, nickname, avatar, follow_time, is_mutual }, page, total, has_more }
+  Future<http.Response> getFollowing({int page = 1, int pageSize = 20}) {
+    final path = '/user/following';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      'page': '$page',
+      'page_size': '$pageSize',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
+  /// 我的粉丝列表（业务接口）
+  ///
+  /// 返回 data：{ list[]{ user_id, nickname, avatar, follow_time, is_mutual }, page, total, has_more }
+  Future<http.Response> getFollowers({int page = 1, int pageSize = 20}) {
+    final path = '/user/followers';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      'page': '$page',
+      'page_size': '$pageSize',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
+  /// 关注统计（业务接口）
+  ///
+  /// 返回 data：{ following, followers, friends }
+  Future<http.Response> getFollowCounts() {
+    final path = '/user/followCounts';
+    return http.get(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
   /// 评论点赞 / 取消点赞（切换，业务接口）
   ///
   /// 返回：is_liked、like_count

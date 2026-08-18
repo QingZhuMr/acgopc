@@ -40,6 +40,7 @@ import 'widgets/pick_images.dart';
 import 'pages/post_detail_page.dart';
 import 'pages/privacy_settings_page.dart';
 import 'pages/publish_post_page.dart';
+import 'pages/relation_list_page.dart';
 import 'widgets/report_dialog.dart';
 import 'services/secure_storage.dart';
 import 'pages/splash_page.dart';
@@ -1959,6 +1960,44 @@ class _ProfileViewState extends State<_ProfileView> {
     return 0;
   }
 
+  /// 关注 / 粉丝计数（我的页面展示）
+  int _followCount = 0;
+  int _followerCount = 0;
+  bool _followCountsLoaded = false;
+
+  /// 加载关注/粉丝计数
+  Future<void> _loadFollowCounts() async {
+    if (_followCountsLoaded) return;
+    try {
+      final resp = await ApiClient.instance
+          .getFollowCounts()
+          .timeout(const Duration(seconds: 15));
+      final json = ApiClient.safeJsonDecode(resp.body);
+      if (!mounted || json['code'] != 0) return;
+      final data = (json['data'] ?? {}) as Map<String, dynamic>;
+      setState(() {
+        _followCount = (data['following'] as num?)?.toInt() ?? 0;
+        _followerCount = (data['followers'] as num?)?.toInt() ?? 0;
+        _followCountsLoaded = true;
+      });
+    } catch (_) {
+      // 静默失败
+    }
+  }
+
+  /// 打开关系列表页（二级页面，默认 tab 由入口决定：0=互相关注 1=关注 2=粉丝）
+  void _openRelationList(int initialTab) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RelationListPage(
+          initialTab: initialTab,
+          onOpenUserProfile: (uid, nickname, avatar) =>
+              _HomePageState.current?.openUserProfile(uid, nickname, avatar),
+        ),
+      ),
+    );
+  }
+
   /// 用户 UID（用户 id）
   String get _uid {
     final raw = _user['id'];
@@ -2003,6 +2042,8 @@ class _ProfileViewState extends State<_ProfileView> {
     super.initState();
     // 监听钱包余额推送（充值到账后 WS 实时刷新熊爪余额）
     WsService.instance.onWallet = _onWalletPushed;
+    // 加载关注/粉丝计数
+    _loadFollowCounts();
     // 加载当前 tab 数据（首次进入个人中心，默认「动态」）
     if (widget.active) _loadProfileData();
   }
@@ -2013,6 +2054,8 @@ class _ProfileViewState extends State<_ProfileView> {
     // 从其他 tab 切回个人中心（active 由 false → true）时刷新当前 tab 数据，
     // 保证「广场里发帖/收藏」后切回来能看到最新数据（按需拉取，无轮询开销）。
     if (widget.active && !oldWidget.active) {
+      _followCountsLoaded = false;
+      _loadFollowCounts();
       _loadProfileData();
     }
   }
@@ -2180,10 +2223,19 @@ class _ProfileViewState extends State<_ProfileView> {
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              // // 金币图标（橙金色，避免爪印图形）
-                              // const Icon(Icons.monetization_on,
-                              //     size: 15, color: Color(0xFFF5A623)),
-                              // const SizedBox(width: 3),
+                              // 关注 / 粉丝入口（熊爪数左侧）
+                              _CountEntry(
+                                label: '关注',
+                                count: _followCount,
+                                onTap: () => _openRelationList(1),
+                              ),
+                              const SizedBox(width: 16),
+                              _CountEntry(
+                                label: '粉丝',
+                                count: _followerCount,
+                                onTap: () => _openRelationList(2),
+                              ),
+                              const SizedBox(width: 16),
                               Text('熊爪数:',
                                   style: TextStyle(
                                       fontSize: 13,
@@ -3846,6 +3898,55 @@ class _UserProfilePageState extends State<UserProfilePage> {
     final id = (p['id'] as num?)?.toInt() ?? 0;
     if (id <= 0) return;
     _HomePageState.current?.openPostFullInContent(p, id);
+  }
+}
+
+/// 我的页面计数入口（关注 / 粉丝），数字加粗、可点击
+class _CountEntry extends StatelessWidget {
+  final String label;
+  final int count;
+  final VoidCallback onTap;
+
+  const _CountEntry({
+    required this.label,
+    required this.count,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final b = Theme.of(context).brightness;
+    return InkWell(
+      onTap: onTap,
+      mouseCursor: SystemMouseCursors.click,
+      borderRadius: BorderRadius.circular(kRadiusSm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$count',
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.0,
+                fontWeight: FontWeight.w700,
+                color: textColor(b),
+              ),
+            ),
+            const SizedBox(width: 3),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.0,
+                color: textMutedColor(b),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
