@@ -50,7 +50,7 @@ class MeetPage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Icon(
-                      Icons.explore_rounded,
+                      Icons.public_rounded,
                       size: 34,
                       color: textFaintColor(b),
                     ),

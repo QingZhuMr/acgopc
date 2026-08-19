@@ -635,7 +635,7 @@ class _HomePageState extends State<HomePage> {
         ),
         // 遇见入口（广场下方、我的上方）：随机邂逅用户（当前为占位页）
         _NavItem(
-          Icons.explore_outlined,
+          Icons.public_rounded,
           '遇见',
           const MeetPage(),
         ),
@@ -865,7 +865,7 @@ class _HomePageState extends State<HomePage> {
         ),
         // 导航项（遇见，广场下方、我的上方）
         _MacRailItem(
-          icon: Icons.explore_outlined,
+          icon: Icons.public_rounded,
           label: '遇见',
           selected: _currentIndex == 2,
           brightness: b,
