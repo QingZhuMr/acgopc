@@ -3,11 +3,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../core/app_theme.dart';
+import '../widgets/earth_globe.dart';
 
-/// 「遇见」页面（占位）
+/// 「遇见」页面
 ///
 /// 通过左侧导航栏「广场」下方、「我的」上方的「遇见」入口进入。
-/// 功能规划：随机推荐用户（随机邂逅，可关注、进主页），当前为占位页面。
+/// 功能规划：随机推荐用户（随机邂逅，可关注、进主页）。
+/// 当前内容：程序化渲染的 3D 彩色旋转地球。
 /// 作为侧边栏 tab 内嵌展示（不遮挡左侧导航栏），无返回按钮。
 class MeetPage extends StatelessWidget {
   const MeetPage({super.key});
@@ -36,42 +38,18 @@ class MeetPage extends StatelessWidget {
               ],
             ),
           ),
-          // 内容区：占位空态（功能规划中）
+          // 内容区：3D 彩色旋转地球
           Expanded(
             child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: bgSoftColor(b),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Icon(
-                      Icons.public_rounded,
-                      size: 34,
-                      color: textFaintColor(b),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    '遇见',
-                    style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
-                        color: textColor(b)),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '随机邂逅用户功能即将上线',
-                    style: TextStyle(fontSize: 13, color: textFaintColor(b)),
-                  ),
-                ],
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final size = constraints.biggest.shortestSide.clamp(220.0, 360.0);
+                  return EarthGlobe(size: size);
+                },
               ),
             ),
           ),
+          const SizedBox(height: 8),
         ],
       ),
     );

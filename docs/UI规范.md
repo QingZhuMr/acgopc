@@ -112,7 +112,8 @@ Row(
 ### 2.3 侧边导航
 - 自绘 `_MacRailItem`（图标 + 文字，左对齐，Finder 风格），顶部 Logo，中间为功能项，底部为通知 + 设置
 - **导航顺序与索引**：消息(0) → 广场(1) → **遇见(2)** → 我的(3) →（Spacer）→ 通知(4) → 设置(5)，`_navItems` 与 `_buildMacRail` 顺序一致，`IndexedStack.index = _currentIndex`
-- **「遇见」入口**（`MeetPage`，`Icons.public_rounded`（星球），`pages/meet_page.dart`）：位于广场下方、我的上方，随机邂逅用户功能（当前为**占位页**，标题行 20px/w600 + 居中空态图标 `public_rounded`）；作为侧边栏 tab 内嵌展示（不遮挡左侧导航栏），无返回按钮，标题行间距与通知页一致（Win 距顶 5px / macOS 20px，左右 24px）
+- **「遇见」入口**（`MeetPage`，`Icons.public_rounded`（星球），`pages/meet_page.dart`）：位于广场下方、我的上方，随机邂逅用户功能；作为侧边栏 tab 内嵌展示（不遮挡左侧导航栏），无返回按钮，标题行间距与通知页一致（Win 距顶 5px / macOS 20px，左右 24px）
+- **「遇见」页内容**：程序化渲染的 **3D 彩色旋转地球**（`widgets/earth_globe.dart`，纯 Canvas 无外部资源）——经纬网格球面投影 + 23.5° 轴倾斜 + 环形谐波噪声生成海陆（海洋蓝径向渐变 + 彩色大陆：热带绿/黄绿/沙漠黄/棕/极地浅色）+ 自转动画（14s/圈，`AnimationController.repeat`）+ 左上高光 + 大气辉光；内容区居中，直径随可用空间 `clamp(220,360)`；**无任何占位图标/文字**
 - **选中态**：图标与文字均 `primary` 蓝，文字**不加粗**（w400），指示器 `primarySoft` 浅蓝底
 - **未选中态**：图标与文字均 `text`（白天黑 `#111827` / 夜晚白 `#F5F5F7`），与内容页主文字一致
 - **角标**：`badge` 参数（红色 `kDanger` 胶囊，99+ 封顶，`Positioned` 于图标右上角）——「消息」显示**聊天未读总数**（监听 `ChatStore.chatUnreadTick`）；「通知」显示**通知中心未读数**（`NotificationCenter.instance.unread`，`kPrimary` 铃铛高亮）
