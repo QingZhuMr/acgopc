@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
@@ -238,7 +236,6 @@ class _FindFormDialogState extends State<FindFormDialog> {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final titleColor = dark ? DarkColors.text : LightColors.text;
-    final sectionTitleColor = kPrimary;
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -440,23 +437,17 @@ class _FindFormDialogState extends State<FindFormDialog> {
   }
 
   Widget _genderSelector(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
     return _labelWrap(
       context,
       '我的性别',
-      SegmentedButton<int>(
-        segments: const [
-          ButtonSegment(value: 1, label: Text('男')),
-          ButtonSegment(value: 2, label: Text('女')),
+      _pillSelector(
+        context,
+        options: const [
+          (value: 1, label: '男'),
+          (value: 2, label: '女'),
         ],
-        selected: {_gender ?? -1},
-        onSelectionChanged: (s) => setState(() => _gender = s.first),
-        showSelectedIcon: false,
-        style: ButtonStyle(
-          visualDensity: VisualDensity.compact,
-          textStyle:
-              WidgetStatePropertyAll(TextStyle(fontSize: 13, color: dark ? DarkColors.text : LightColors.text)),
-        ),
+        selected: _gender ?? -1,
+        onChanged: (v) => setState(() => _gender = v),
       ),
     );
   }
@@ -465,15 +456,91 @@ class _FindFormDialogState extends State<FindFormDialog> {
     return _labelWrap(
       context,
       '目标性别',
-      SegmentedButton<int>(
-        segments: const [
-          ButtonSegment(value: 0, label: Text('不限')),
-          ButtonSegment(value: 1, label: Text('男')),
-          ButtonSegment(value: 2, label: Text('女')),
+      _pillSelector(
+        context,
+        options: const [
+          (value: 0, label: '不限'),
+          (value: 1, label: '男'),
+          (value: 2, label: '女'),
         ],
-        selected: {_targetGender},
-        onSelectionChanged: (s) => setState(() => _targetGender = s.first),
-        showSelectedIcon: false,
+        selected: _targetGender,
+        onChanged: (v) => setState(() => _targetGender = v),
+      ),
+    );
+  }
+
+  /// 现代化低对比度胶囊选择器
+  ///
+  /// 整组为柔和的灰底胶囊容器，选中项用主题蓝浅底 + 主题蓝文字
+  /// （无实色填充、无高对比），hover 有柔和高亮，选中切换带平滑过渡。
+  Widget _pillSelector(
+    BuildContext context, {
+    required List<({int value, String label})> options,
+    required int selected,
+    required ValueChanged<int> onChanged,
+  }) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final soft =
+        dark ? DarkColors.primarySoft : LightColors.primarySoft;
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: dark ? DarkColors.bgHover : LightColors.bgHover,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          for (final opt in options)
+            Expanded(
+              child: _pillItem(
+                context,
+                label: opt.label,
+                selected: opt.value == selected,
+                hoverColor: soft.withValues(alpha: 0.5),
+                onTap: () => onChanged(opt.value),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pillItem(
+    BuildContext context, {
+    required String label,
+    required bool selected,
+    required Color hoverColor,
+    required VoidCallback onTap,
+  }) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      margin: const EdgeInsets.symmetric(horizontal: 1),
+      decoration: BoxDecoration(
+        color: selected
+            ? (dark ? DarkColors.primarySoft : LightColors.primarySoft)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        hoverColor: hoverColor,
+        borderRadius: BorderRadius.circular(7),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              color: selected
+                  ? kPrimary
+                  : (dark ? DarkColors.textMuted : LightColors.textMuted),
+            ),
+          ),
+        ),
       ),
     );
   }
