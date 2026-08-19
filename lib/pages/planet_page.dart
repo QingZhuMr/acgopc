@@ -1,12 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
+import '../core/app_config.dart';
 import '../core/app_theme.dart';
+import '../services/notification_center.dart';
 import '../services/planet_generator.dart';
 import '../widgets/find_form_dialog.dart';
+import '../widgets/match_dialog.dart';
 import '../widgets/notify.dart';
 import '../widgets/planet_globe.dart';
 import '../widgets/starfield.dart';
@@ -160,7 +164,7 @@ class _PlanetPageState extends State<PlanetPage> {
   Widget build(BuildContext context) {
     // 白天模式背景稍亮（深蓝黑），夜间模式保持宇宙黑
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? _spaceBg : _spaceBgDay;
+    final bg = isDark ? kSpaceBg : kSpaceBgDay;
     return Scaffold(
       backgroundColor: bg,
       body: Stack(
@@ -470,16 +474,18 @@ class _PlanetPageState extends State<PlanetPage> {
     }
     final clickable = enabled || bound || finding;
 
-    return _GlassBlock(
-      radius: 24,
-      hPad: 40,
-      vPad: 12,
-      child: InkWell(
-        onTap: clickable ? () => _onFindTap() : null,
-        borderRadius: BorderRadius.circular(24),
-        mouseCursor: clickable
-            ? SystemMouseCursors.click
-            : SystemMouseCursors.basic,
+    // 用外层 InkWell 包裹整个玻璃块，使按钮范围内的空白（padding）也可点击，
+    // 而不是只能点击文字（修复「点击热区仅为文字」的问题）
+    return InkWell(
+      onTap: clickable ? () => _onFindTap() : null,
+      borderRadius: BorderRadius.circular(24),
+      mouseCursor: clickable
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
+      child: _GlassBlock(
+        radius: 24,
+        hPad: 40,
+        vPad: 12,
         child: Text(
           text,
           style: TextStyle(
@@ -518,6 +524,16 @@ class _PlanetPageState extends State<PlanetPage> {
       NotifyStack.warning('该星球暂未开放寻找配对', title: '提示');
       return;
     }
+    // 费用 / 余额预校验（与后端一致：free_remaining>0 免费，否则扣 match_cost）
+    final matchCost = (cfg['match_cost'] as num?)?.toInt() ?? 0;
+    final freeRemaining = (cfg['free_remaining'] as num?)?.toInt() ?? 0;
+    final balancePaw = (cfg['balance_paw'] as num?)?.toInt() ?? 0;
+    if (freeRemaining <= 0 && matchCost > 0 && balancePaw < matchCost) {
+      NotifyStack.warning(
+          '熊爪不足，无法发起寻找（需 $matchCost，当前 $balancePaw）',
+          title: '提示');
+      return;
+    }
     // 正常：弹出填写表单
     _openFindForm(cfg);
   }
@@ -539,70 +555,62 @@ class _PlanetPageState extends State<PlanetPage> {
         forceFaceAuth: cfg['force_face_auth'] == true,
         forceEduAuth: cfg['force_edu_auth'] == true,
         forceAssetAuth: cfg['force_asset_auth'] == true,
+        findCost: (cfg['match_cost'] as num?)?.toInt() ?? 0,
+        freeRemaining: (cfg['free_remaining'] as num?)?.toInt() ?? 0,
+        balancePaw: (cfg['balance_paw'] as num?)?.toInt() ?? 0,
+        costNotice: (cfg['cost_notice'] as String? ?? '').toString(),
       ),
     );
     if (result == null || !mounted) return;
     if (result.status == 1) {
       // 配对成功：展示绑定人
       _showMatched(result);
+    } else if (result.status == 0) {
+      // 未立即配对成功：展示等待倒计时（超时/取消自动停止并退回扣费）
+      await _showFindingWait();
+    } else if (result.isFree) {
+      NotifyStack.success('已开始寻找（本次免费）', title: '寻找中');
     } else {
-      NotifyStack.success('已开始寻找，请保持在线', title: '寻找中');
+      NotifyStack.success('已开始寻找（消耗 ${result.cost} 熊爪）', title: '寻找中');
     }
     // 刷新配置（按钮状态更新为寻找中/已配对）
     _loadFindConfig();
   }
 
-  /// 配对成功弹窗
-  void _showMatched(FindFormResult result) {
-    final u = result.matchedUser;
-    showDialog<void>(
+  /// 等待配对弹窗（带超时倒计时，超时自动停止并退回本次扣费）
+  Future<void> _showFindingWait() async {
+    final matchTimeout = (_findConfig?['match_timeout'] as num?)?.toInt() ?? 60;
+    await showDialog<void>(
       context: context,
       barrierColor: Colors.black54,
-      builder: (_) => AlertDialog(
-        backgroundColor:
-            Theme.of(context).brightness == Brightness.dark
-                ? DarkColors.bgSoft
-                : LightColors.bgSoft,
-        shape: RoundedRectangleBorder(borderRadius: kRadiusCardAll),
-        title: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.favorite_rounded, color: Color(0xFFFF4D6D), size: 22),
-            SizedBox(width: 8),
-            Text('配对成功', style: TextStyle(fontWeight: FontWeight.w700)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '恭喜！${u?['nickname'] ?? '对方'} 和你在「$_name」星球上配对了',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 14),
-            _buildAvatar(u?['avatar'] as String? ?? '', 56),
-            const SizedBox(height: 10),
-            Text(
-              u?['nickname'] as String? ?? '配对对象',
-              style: const TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              '你们已成为绑定人，互相自动关注；解除绑定前将保持好友关系',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
-        ),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('知道了'),
-          ),
-        ],
+      barrierDismissible: false,
+      builder: (_) => _FindingWaitDialog(
+        timeoutSeconds: matchTimeout,
+        onCancel: () => _stopFind(timeout: false),
+        onTimeout: () => _stopFind(timeout: true),
+      ),
+    );
+    if (mounted) _loadFindConfig();
+  }
+
+  /// 配对成功弹窗（统一走通知中心的全局配对弹窗）
+  ///
+  /// 显示对方头像/昵称/填写的资料，仅可点击「去聊天」关闭并跳转对方对话框。
+  /// WS 推送随后到达时会被通知中心按 uid 去重，不会重复弹出。
+  void _showMatched(FindFormResult result) {
+    final u = result.matchedUser;
+    final uid = (u?['uid'] as num?)?.toInt() ?? 0;
+    if (uid <= 0) return;
+    NotificationCenter.instance.showMatchDialog(
+      MatchInfo(
+        uid: uid,
+        nickname: (u?['nickname'] as String?) ?? '配对对象',
+        avatar: AppConfig.resolveUrl(u?['avatar'] as String? ?? ''),
+        profile: u?['profile'] is Map
+            ? (u?['profile'] as Map).cast<String, dynamic>()
+            : null,
+        planetName: _name,
+        notificationId: null,
       ),
     );
   }
@@ -643,19 +651,22 @@ class _PlanetPageState extends State<PlanetPage> {
     );
   }
 
-  /// 手动停止寻找
-  Future<void> _stopFind() async {
+  /// 手动停止寻找（超时自动停止时 timeout=true，后端会退回本次扣费）
+  Future<void> _stopFind({bool timeout = false}) async {
     try {
       final resp = await ApiClient.instance.stopFind();
       final body = jsonDecode(resp.body) as Map<String, dynamic>;
       if (body['code'] == 0) {
-        NotifyStack.success('已停止寻找', title: '已停止');
+        NotifyStack.success(
+          body['msg'] as String? ?? '已停止寻找',
+          title: timeout ? '匹配超时' : '已停止',
+        );
         _loadFindConfig();
       } else {
         NotifyStack.warning(body['msg'] as String? ?? '操作失败', title: '提示');
       }
     } catch (_) {
-      NotifyStack.error('网络异常，请稍后重试');
+      NotifyStack.warning('网络异常，请稍后重试', title: '提示');
     }
   }
 
@@ -734,7 +745,7 @@ class _PlanetPageState extends State<PlanetPage> {
         NotifyStack.warning(body['msg'] as String? ?? '解除失败', title: '提示');
       }
     } catch (_) {
-      NotifyStack.error('网络异常，请稍后重试');
+      NotifyStack.warning('网络异常，请稍后重试', title: '提示');
     }
   }
 
@@ -850,11 +861,115 @@ const Map<int, PlanetStyle> _styleBySeed = {
 /// 临时预览开关：赋值则忽略接口 type 全量预览该材质；null = 按正常逻辑。
 const PlanetStyle? _stylePreviewAll = null;
 
-/// 星球页专用颜色：夜间宇宙黑
-const Color _spaceBg = Color(0xFF03030A);
-
-/// 星球页专用颜色：白天稍亮深蓝黑
-const Color _spaceBgDay = Color(0xFF0B1020);
-
 /// 星球页主文字（宇宙黑上固定白色）
 const Color _spaceText = Colors.white;
+
+/// 等待配对弹窗（带超时倒计时）
+///
+/// 发起寻找后未立即配对成功时展示：倒计时归零自动停止寻找（后端退回本次扣费），
+/// 也可手动「取消匹配」。关闭弹窗不会停止寻找，仍可通过「寻找中」按钮停止。
+class _FindingWaitDialog extends StatefulWidget {
+  const _FindingWaitDialog({
+    required this.timeoutSeconds,
+    required this.onCancel,
+    required this.onTimeout,
+  });
+
+  /// 超时秒数（后端 find_match_timeout）
+  final int timeoutSeconds;
+
+  /// 手动取消
+  final VoidCallback onCancel;
+
+  /// 倒计时归零
+  final VoidCallback onTimeout;
+
+  @override
+  State<_FindingWaitDialog> createState() => _FindingWaitDialogState();
+}
+
+class _FindingWaitDialogState extends State<_FindingWaitDialog> {
+  late int _remaining;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _remaining = widget.timeoutSeconds > 0 ? widget.timeoutSeconds : 60;
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _remaining--);
+      if (_remaining <= 0) {
+        _timer?.cancel();
+        Navigator.of(context).pop();
+        widget.onTimeout();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: Container(
+        width: 320,
+        padding: const EdgeInsets.fromLTRB(24, 26, 24, 20),
+        decoration: BoxDecoration(
+          color: dark ? DarkColors.bgSoft : LightColors.bgSoft,
+          borderRadius: kRadiusCardAll,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.radar_rounded, size: 48, color: kPrimary),
+            const SizedBox(height: 12),
+            Text(
+              '正在寻找有缘人…',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: dark ? DarkColors.text : LightColors.text,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '匹配倒计时 $_remaining 秒',
+              style: const TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              '超时或取消将退回本次扣费',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      _timer?.cancel();
+                      Navigator.of(context).pop();
+                      widget.onCancel();
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFFF4D6D),
+                      side: const BorderSide(color: Color(0xFFFF4D6D)),
+                    ),
+                    child: const Text('取消匹配'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

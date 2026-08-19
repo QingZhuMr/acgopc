@@ -42,6 +42,7 @@ import 'pages/planet_page.dart';
 import 'utils/image_transcoder.dart';
 import 'widgets/bubble_menu.dart';
 import 'widgets/cached_avatar.dart';
+import 'widgets/match_dialog.dart';
 import 'widgets/notify.dart';
 import 'widgets/pick_images.dart';
 import 'widgets/text_input_menu.dart';
@@ -301,6 +302,7 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
     NotificationCenter.instance.start(
       onOpenPost: _openPostFromNotice,
       onOpenUserProfile: _openUserProfileFromNotice,
+      onShowMatchDialog: _showMatchDialogGlobal,
     );
     // 启动聊天离线消息通知：点击通知跳转对应会话
     ChatNotifier.instance.start(
@@ -355,6 +357,24 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
       _HomePageState.current!.openUserProfile(uid, nickname, avatar);
       return;
     }
+  }
+
+  /// 配对成功全局弹窗
+  ///
+  /// 显示对方头像/昵称/填写的资料，弹窗无法手动关闭，
+  /// 仅点击「去聊天」按钮关闭并跳转到与对方的对话框（通知流程结束）。
+  Future<bool> _showMatchDialogGlobal(MatchInfo info) async {
+    final hp = _HomePageState.current;
+    if (hp == null || !hp.mounted) return false;
+    return showMatchDialog(
+      hp.context,
+      info,
+      onOpenChat: () {
+        if (_HomePageState.current?.mounted == true) {
+          _HomePageState.current!.openChatWithPeer(info.uid);
+        }
+      },
+    );
   }
 
   /// WebSocket 实时推送的强制退出处理（带原因提示）
@@ -919,8 +939,11 @@ class _HomePageState extends State<HomePage> {
     final b = Theme.of(context).brightness;
     // 实心版本：窗口整体为不透明实心背景，无玻璃效果
     return Scaffold(
-      // 内容页背景标准色（实心不透明）
-      backgroundColor: bgColor(b),
+      // 探索页（星球页，index 2）：顶栏/内容/底层背景三方同色，
+      // 避免 Windows DPI 缩放下顶栏与内容间亚像素缝隙露出浅色背景形成分割线
+      backgroundColor: _currentIndex == 2
+          ? (b == Brightness.dark ? kSpaceBg : kSpaceBgDay)
+          : bgColor(b),
       body: Row(
         children: [
           // 左侧导航栏（副区块背景，无边框，Finder 风格，双端一致；实心不透明）
@@ -937,12 +960,22 @@ class _HomePageState extends State<HomePage> {
                 if (!Platform.isMacOS || _currentIndex != 0)
                   _TitleBar(
                     brightness: b,
-                    color: _currentIndex == 0 ? bgSoftColor(b) : null,
+                    // 消息页：bgSoftColor 与左侧导航栏一致；
+                    // 探索页（星球页）：跟随星球页背景色（夜间宇宙黑/白天深蓝黑）
+                    color: switch (_currentIndex) {
+                      0 => bgSoftColor(b),
+                      2 => b == Brightness.dark ? kSpaceBg : kSpaceBgDay,
+                      _ => null,
+                    },
                   ),
                 // 下方内容区（无分割线，无边框；实心不透明）
                 Expanded(
                   child: Container(
-                    color: bgColor(b),
+                    // 探索页（星球页，index 2）：顶栏与内容同为深蓝黑/宇宙黑，
+                    // 容器改用同色，避免 sub-pixel 缝隙露出浅色背景形成顶栏分割线
+                    color: _currentIndex == 2
+                        ? (b == Brightness.dark ? kSpaceBg : kSpaceBgDay)
+                        : bgColor(b),
                     child: _macOverlay != null
                         // macOS 覆盖页（发帖/详情内嵌，保留导航栏）
                         ? _macOverlay!

@@ -13,8 +13,16 @@ class FindFormResult {
   final int status;
   final Map<String, dynamic>? matchedUser;
   final Map<String, dynamic>? bind;
+  final bool isFree;
+  final int cost;
 
-  const FindFormResult({required this.status, this.matchedUser, this.bind});
+  const FindFormResult({
+    required this.status,
+    this.matchedUser,
+    this.bind,
+    this.isFree = false,
+    this.cost = 0,
+  });
 }
 
 /// 「开始寻找」动态表单弹窗
@@ -32,6 +40,11 @@ class FindFormDialog extends StatefulWidget {
   final bool forceEduAuth;
   final bool forceAssetAuth;
   final Map<String, dynamic>? auth;
+  // 付费 / 免费次数展示信息（来自 /find/config）
+  final int findCost;
+  final int freeRemaining;
+  final int balancePaw;
+  final String costNotice;
 
   const FindFormDialog({
     super.key,
@@ -43,6 +56,10 @@ class FindFormDialog extends StatefulWidget {
     this.forceEduAuth = false,
     this.forceAssetAuth = false,
     this.auth,
+    this.findCost = 0,
+    this.freeRemaining = 0,
+    this.balancePaw = 0,
+    this.costNotice = '',
   });
 
   @override
@@ -76,7 +93,7 @@ class _FindFormDialogState extends State<FindFormDialog> {
   bool _sameCity = false;
 
   /// 是否配置了某「我的资料」字段
-  bool get _hasField => widget.findFields.contains;
+  bool _hasField(String key) => widget.findFields.contains(key);
 
   static const _incomeOptions = ['1万以内', '1-2万', '2-5万', '5万以上'];
   static const _eduOptions = ['高中及以下', '大专', '本科', '硕士', '博士'];
@@ -91,7 +108,7 @@ class _FindFormDialogState extends State<FindFormDialog> {
       _incomeCtrl.text = '${p['income_range'] ?? ''}';
       _personalityCtrl.text = '${p['personality'] ?? ''}';
       _cityCtrl.text = '${p['city'] ?? ''}';
-      _faceScore = (p['face_score'] as num?)?.toInt() ?? 0;
+      _faceScore = (p['face_score'] as num?)?.toDouble() ?? 0;
       _eduCtrl.text = '${p['edu_level'] ?? ''}';
     }
   }
@@ -204,10 +221,12 @@ class _FindFormDialogState extends State<FindFormDialog> {
           status: status,
           matchedUser: data['matched_user'] as Map<String, dynamic>?,
           bind: data['bind'] as Map<String, dynamic>?,
+          isFree: (data['is_free'] as bool?) ?? false,
+          cost: (data['cost'] as num?)?.toInt() ?? 0,
         ),
       );
     } catch (_) {
-      if (mounted) NotifyStack.error('网络异常，请稍后重试');
+      if (mounted) NotifyStack.warning('网络异常，请稍后重试', title: '提示');
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -286,60 +305,60 @@ class _FindFormDialogState extends State<FindFormDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _sectionTitle(context, '我的资料', sectionTitleColor),
-                    _genderSelector(context),
-                    _textField(context, _ageCtrl, '我的年龄', '18-99'),
-                    if (_hasField('income_range')) ...[
-                      _dropdownField(context, _incomeCtrl, _incomeOptions,
-                          '我的月收入范围', '请选择'),
-                    ],
-                    if (_hasField('personality'))
-                      _textField(
-                          context, _personalityCtrl, '我的性格', '如：开朗、幽默'),
-                    if (_hasField('city'))
-                      _textField(context, _cityCtrl, '我的城市', '如：北京'),
-                    if (_hasField('face_score')) ...[
-                      _scoreSlider(
-                        context,
-                        value: _faceScore,
-                        label: '我的颜值打分',
-                        onChanged: (v) => setState(() => _faceScore = v),
-                      ),
-                    ],
-                    if (_hasField('edu_level'))
-                      _dropdownField(
-                          context, _eduCtrl, _eduOptions, '我的学历', '请选择'),
-                    const SizedBox(height: 14),
-                    _sectionTitle(context, '目标条件', sectionTitleColor),
-                    _targetGenderSelector(context),
-                    _ageRangeRow(context),
-                    if (_hasField('income_range'))
-                      _dropdownField(context, _targetIncomeCtrl, _incomeOptions,
-                          '目标月收入范围', '不限'),
-                    if (_hasField('personality'))
-                      _textField(context, _targetPersonalityCtrl, '目标性格',
-                          '不限（留空）'),
-                    if (_hasField('city')) ...[
-                      _textField(context, _targetCityCtrl, '目标城市',
-                          '如：北京'),
-                      _sameCityRow(context),
-                    ],
-                    if (_hasField('face_score'))
-                      _scoreSlider(
-                        context,
-                        value: _targetFaceScore,
-                        label: '目标颜值打分',
-                        onChanged: (v) => setState(() => _targetFaceScore = v),
-                      ),
-                    if (_hasField('edu_level'))
-                      _dropdownField(context, _targetEduCtrl, _eduOptions,
-                          '目标学历', '不限'),
-                    const SizedBox(height: 8),
+                    _sectionCard(context, '我的资料', [
+                      _genderSelector(context),
+                      _textField(context, _ageCtrl, '我的年龄', '18-99'),
+                      if (_hasField('income_range'))
+                        _dropdownField(context, _incomeCtrl, _incomeOptions,
+                            '我的月收入范围', '请选择'),
+                      if (_hasField('personality'))
+                        _textField(context, _personalityCtrl, '我的性格',
+                            '如：开朗、幽默'),
+                      if (_hasField('city'))
+                        _textField(context, _cityCtrl, '我的城市', '如：北京'),
+                      if (_hasField('face_score'))
+                        _scoreSlider(
+                          context,
+                          value: _faceScore,
+                          label: '我的颜值打分',
+                          onChanged: (v) => setState(() => _faceScore = v),
+                        ),
+                      if (_hasField('edu_level'))
+                        _dropdownField(
+                            context, _eduCtrl, _eduOptions, '我的学历', '请选择'),
+                    ]),
+                    _sectionCard(context, '目标条件', [
+                      _targetGenderSelector(context),
+                      _ageRangeRow(context),
+                      if (_hasField('income_range'))
+                        _dropdownField(context, _targetIncomeCtrl, _incomeOptions,
+                            '目标月收入范围', '不限'),
+                      if (_hasField('personality'))
+                        _textField(context, _targetPersonalityCtrl, '目标性格',
+                            '不限（留空）'),
+                      if (_hasField('city')) ...[
+                        _textField(context, _targetCityCtrl, '目标城市',
+                            '如：北京'),
+                        _sameCityRow(context),
+                      ],
+                      if (_hasField('face_score'))
+                        _scoreSlider(
+                          context,
+                          value: _targetFaceScore,
+                          label: '目标颜值打分',
+                          onChanged: (v) =>
+                              setState(() => _targetFaceScore = v),
+                        ),
+                      if (_hasField('edu_level'))
+                        _dropdownField(context, _targetEduCtrl, _eduOptions,
+                            '目标学历', '不限'),
+                    ]),
                     _authHint(context),
                   ],
                 ),
               ),
             ),
+            _buildCostHint(context),
             // 底部按钮
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
@@ -351,7 +370,8 @@ class _FindFormDialogState extends State<FindFormDialog> {
                     backgroundColor: kPrimary,
                     disabledBackgroundColor: kPrimary.withValues(alpha: 0.4),
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: kRadiusBtnAll,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: kRadiusBtnAll),
                   ),
                   child: _submitting
                       ? const SizedBox(
@@ -372,16 +392,49 @@ class _FindFormDialogState extends State<FindFormDialog> {
     );
   }
 
-  Widget _sectionTitle(BuildContext context, String title, Color color) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w700,
-          color: color,
+  Widget _sectionCard(
+      BuildContext context, String title, List<Widget> children) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: dark ? const Color(0x14FFFFFF) : Colors.grey.shade50,
+        borderRadius: kRadiusCardAll,
+        border: Border.all(
+          color: dark ? const Color(0x1AFFFFFF) : Colors.grey.shade200,
+          width: 1,
         ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 3,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: kPrimary,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: dark ? DarkColors.text : LightColors.text,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ...children,
+        ],
       ),
     );
   }
@@ -558,6 +611,16 @@ class _FindFormDialogState extends State<FindFormDialog> {
                       dark ? DarkColors.textFaint : LightColors.textFaint),
               filled: true,
               fillColor: inputColor,
+              enabledBorder: OutlineInputBorder(
+                borderRadius: kRadiusBtnAll,
+                borderSide: BorderSide(
+                    color: dark ? Colors.white24 : Colors.grey.shade300,
+                    width: 1),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: kRadiusBtnAll,
+                borderSide: BorderSide(color: kPrimary, width: 1.5),
+              ),
               border: OutlineInputBorder(
                 borderRadius: kRadiusBtnAll,
                 borderSide: BorderSide.none,
@@ -716,8 +779,58 @@ class _FindFormDialogState extends State<FindFormDialog> {
             max: 10,
             divisions: 10,
             label: value < 1 ? '不限' : '${value.toInt()}分',
+            activeColor: kPrimary,
+            thumbColor: kPrimary,
             onChanged: onChanged,
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCostHint(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final free = widget.freeRemaining > 0;
+    final paid = !free && widget.findCost > 0;
+    final mainText = free
+        ? '本次免费（剩余 ${widget.freeRemaining} 次）'
+        : (paid
+            ? '本次消耗 ${widget.findCost} 熊爪（余额 ${widget.balancePaw}）'
+            : '本次免费');
+    final notice = widget.costNotice.trim();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: kPrimary.withValues(alpha: 0.1),
+        borderRadius: kRadiusMdAll,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome_rounded, size: 15, color: kPrimary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(mainText,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: kPrimary)),
+              ),
+            ],
+          ),
+          if (notice.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(notice,
+                style: TextStyle(
+                    fontSize: 11,
+                    color: dark
+                        ? DarkColors.textFaint
+                        : LightColors.textFaint)),
+          ],
         ],
       ),
     );

@@ -126,6 +126,7 @@ class WsService {
     void Function(Map<String, dynamic> maintenance)? onMaintenance,
     void Function(Map<String, dynamic> notification)? onReplyNotice,
     void Function(Map<String, dynamic> notification)? onFollowNotice,
+    void Function(Map<String, dynamic> notification)? onMatchNotice,
     void Function()? onReconnected,
   }) {
     this.onForceLogout = onForceLogout;
@@ -133,6 +134,7 @@ class WsService {
     this.onMaintenance = onMaintenance;
     this.onReplyNotice = onReplyNotice;
     this.onFollowNotice = onFollowNotice;
+    this.onMatchNotice = onMatchNotice;
     this.onReconnected = onReconnected;
     if (_running) return;
     _running = true;

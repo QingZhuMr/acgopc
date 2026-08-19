@@ -467,8 +467,9 @@ class MinecraftPlanetGenerator {
         } else if (_isGradient) {
           // ---- 渐变：整颗渐变表面（无海陆，糖果风） ----
           // 柔和明暗云纹：海浅色亮区 ↔ 海深色暗区
+          // 经度频率取 6 的倍数（_noise 经度环绕周期为 6），保证经度 0°/360° 贴图无缝
           final p = _gradientPalette();
-          final t = _fbm(lonN * 14 + 5, latN * 8, octaves: 3);
+          final t = _fbm(lonN * 12 + 5, latN * 8, octaves: 3);
           color = Color.lerp(p.$2, p.$1, _smoothstep(0.15, 0.85, t))!;
         } else if (style == PlanetStyle.blackhole) {
           // ---- 黑洞：全黑，无陆地（光晕由 shader 橙色高亮，此处仅贴图） ----
@@ -537,6 +538,17 @@ class MinecraftPlanetGenerator {
         bytes[i + 2] = (color.b * 255).round();
         bytes[i + 3] = 255;
       }
+    }
+
+    // 经度 0°/360° 环绕接缝：末列复制首列，让球面映射接缝两侧像素完全一致，
+    // 消除自转时经度 0 处出现的"经纬线分割"割裂感
+    for (var y = 0; y < height; y++) {
+      final src = y * width * 4;
+      final dst = src + (width - 1) * 4;
+      bytes[dst] = bytes[src];
+      bytes[dst + 1] = bytes[src + 1];
+      bytes[dst + 2] = bytes[src + 2];
+      bytes[dst + 3] = bytes[src + 3];
     }
 
     final c = Completer<ui.Image>();

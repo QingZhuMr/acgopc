@@ -120,6 +120,12 @@ Color bgColor(Brightness b) =>
     b == Brightness.dark ? DarkColors.bg : LightColors.bg;
 Color bgSoftColor(Brightness b) =>
     b == Brightness.dark ? DarkColors.bgSoft : LightColors.bgSoft;
+
+/// 探索页（星球页）专用背景：夜间宇宙黑
+const Color kSpaceBg = Color(0xFF03030A);
+
+/// 探索页（星球页）专用背景：白天稍亮深蓝黑
+const Color kSpaceBgDay = Color(0xFF0B1020);
 Color bgHoverColor(Brightness b) =>
     b == Brightness.dark ? DarkColors.bgHover : LightColors.bgHover;
 Color primarySoftColor(Brightness b) =>
