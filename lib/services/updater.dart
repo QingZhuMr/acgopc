@@ -293,8 +293,10 @@ class Updater {
       switch (method) {
         case 'exe':
           if (!Platform.isWindows) return false;
-          await Process.start(updateFile.path, [],
-              mode: ProcessStartMode.detached);
+          // Inno Setup 静默安装：不弹任何界面，安装器自动杀旧进程并覆盖安装
+          await Process.start(updateFile.path, [
+            '/VERYSILENT', '/NORESTART', '/SUPPRESSMSGBOXES', '/SP-',
+          ], mode: ProcessStartMode.detached);
           exit(0);
         case 'dmg':
         case 'pkg':

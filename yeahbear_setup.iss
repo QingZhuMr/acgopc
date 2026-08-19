@@ -2,10 +2,10 @@
 ; Yeahbear（耶熊）PC 客户端 安装脚本（Inno Setup 6）
 ; 打包命令：
 ;   ISCC.exe yeahbear_setup.iss
-; 产物：build\installer\Yeahbear_Setup_0.1.3.exe
+; 产物：build\installer\Yeahbear_Setup_0.1.4.exe
 ; ============================================================
 #define MyAppName "耶熊"
-#define MyAppVersion "0.1.3"
+#define MyAppVersion "0.1.4"
 #define MyAppExeName "Yeahbear.exe"
 #define MyAppPublisher "Yeahbear"
 
@@ -59,10 +59,6 @@ Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 ; 开始菜单快捷方式
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
 
-[Run]
-; 安装完成后勾选启动
-Filename: "{app}\{#MyAppExeName}"; Description: "立即运行 {#MyAppName}"; Flags: nowait postinstall skipifsilent
-
 [Code]
 // 安装开始时自动结束旧版客户端进程（覆盖安装/升级场景）。
 // 配合 [Setup] 的 CloseApplications 双保险，确保 exe/dll 不被旧进程占用。
@@ -77,4 +73,17 @@ function InitializeSetup(): Boolean;
 begin
   Result := True;
   KillYeahbear;
+end;
+
+// 安装完成后启动新版客户端。
+// 用 [Code] 而非 [Run]：Inno Setup 静默模式（/VERYSILENT）下 [Run] 的
+// postinstall 条目不会执行，而这里任何模式（含静默）都会启动新版本。
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    Exec(ExpandConstant('{app}\{#MyAppExeName}'), '', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
+  end;
 end;
