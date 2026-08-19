@@ -39,3 +39,7 @@ flutter:
     - assets/images/app_logo.png
     - assets/images/app_icon.ico
     - assets/images/logo_white.png
+    - assets/images/earth_day.jpg
+    - assets/images/earth_night.jpg
+  shaders:
+    - assets/shaders/earth_shader.frag

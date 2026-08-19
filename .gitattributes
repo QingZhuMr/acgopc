@@ -1,0 +1,2 @@
+# Shader 文件必须保持 LF 行尾（impellerc 编译 .frag 对 CRLF 兼容性差）
+*.frag text eol=lf

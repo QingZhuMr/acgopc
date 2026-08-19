@@ -38,12 +38,13 @@ class MeetPage extends StatelessWidget {
               ],
             ),
           ),
-          // 内容区：3D 彩色旋转地球
+          // 内容区：3D 彩色旋转地球（真实贴图，大尺寸）
           Expanded(
             child: Center(
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final size = constraints.biggest.shortestSide.clamp(220.0, 360.0);
+                  // 尽可能撑满可用空间，但保留大气辉光空间（上限约 90%）
+                  final size = constraints.biggest.shortestSide * 0.9;
                   return EarthGlobe(size: size);
                 },
               ),
