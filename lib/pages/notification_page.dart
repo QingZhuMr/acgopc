@@ -265,8 +265,8 @@ class _NotificationPageState extends State<NotificationPage> {
         return;
       }
     }
-    // type=6/7 配对成功 / 解除绑定通知 → 跳对方主页
-    if (type == 6 || type == 7) {
+    // type=6/7/8 配对成功 / 解除绑定 / 自动解除绑定通知 → 跳对方主页
+    if (type == 6 || type == 7 || type == 8) {
       final fromUid = (n['from_uid'] as num?)?.toInt() ?? 0;
       final fromName = n['from_nickname']?.toString() ?? '';
       final fromAvatar = n['from_avatar']?.toString() ?? '';
@@ -609,6 +609,10 @@ class _NotificationPageState extends State<NotificationPage> {
       case 7:
         title = '$fromName 解除了与你的绑定关系';
         break;
+      case 8:
+        // 自动解除绑定：绑定对象长期未上线（补偿信息在 comment_content 展示）
+        title = '$fromName 长期未上线，绑定已自动解除';
+        break;
       default:
         title = '$fromName 评论了你的动态';
     }
@@ -739,8 +743,8 @@ class _NotificationPageState extends State<NotificationPage> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ],
-                        // 次级小字：所在帖子内容（type=6 的 post_content 是星球名已在标题展示，type=7 无内容）
-                        if (postContent.isNotEmpty && type != 6 && type != 7) ...[
+                        // 次级小字：所在帖子内容（type=6 的 post_content 是星球名已在标题展示，type=7/8 无内容）
+                        if (postContent.isNotEmpty && type != 6 && type != 7 && type != 8) ...[
                           const SizedBox(height: 6),
                           Container(
                             width: double.infinity,

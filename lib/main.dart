@@ -658,7 +658,9 @@ class _HomePageState extends State<HomePage> {
         _NavItem(
           Icons.public_rounded,
           '星球',
-          const PlanetPage(),
+          // IndexedStack 保留 State：切回探索页时 active 置 true，
+          // 触发立即静默刷新 + 启动每 60 秒轮询；离开页面自动停止
+          PlanetPage(active: _currentIndex == 2),
         ),
         _NavItem(
           Icons.person_rounded,

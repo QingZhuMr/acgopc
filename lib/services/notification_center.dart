@@ -214,16 +214,39 @@ class NotificationCenter extends ChangeNotifier {
           nickname: fromName,
           avatar: AppConfig.resolveUrl(fromAvatar),
           profile: rawProfile is Map
-              ? (rawProfile as Map).cast<String, dynamic>()
+              ? rawProfile.cast<String, dynamic>()
               : null,
           planetName: (notification['planet_name'] as String?) ?? '',
           notificationId: id,
         ),
       );
-    } else {
-      // type=7 解除绑定：应用内 + 系统通知（点击跳转对方主页）
+    } else if (type == 7) {
+      // type=7 对方解除绑定：应用内 + 系统通知（点击跳转对方主页）
       final title = '已解除绑定';
       final body = '$fromName 解除了与你的绑定关系';
+      NotifyStack.notify(
+        title: title,
+        message: body,
+        onTap: fromUid > 0
+            ? () => _openUserProfile(fromUid, fromName, fromAvatar)
+            : null,
+        persistent: false,
+      );
+      SystemNotifier.instance.show(
+        title: title,
+        subtitle: AppConfig.appName,
+        body: body,
+        onClick: fromUid > 0
+            ? () => _openUserProfile(fromUid, fromName, fromAvatar)
+            : null,
+      );
+    } else if (type == 8) {
+      // type=8 绑定对象长期未上线，系统自动解除绑定（补偿信息在 comment_content）
+      final comp = (notification['comment_content'] as String?) ?? '';
+      final title = '绑定已自动解除';
+      final body = comp.isNotEmpty
+          ? '$fromName 长期未上线，绑定已自动解除（$comp）'
+          : '$fromName 长期未上线，绑定已自动解除';
       NotifyStack.notify(
         title: title,
         message: body,

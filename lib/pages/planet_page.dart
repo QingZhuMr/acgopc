@@ -22,7 +22,11 @@ import '../widgets/starfield.dart';
 /// + 左上角标语卡片 + 左右箭头切换不同星球 + 左下角当前星球名称/介绍。
 /// 作为侧边栏 tab 内嵌展示（不遮挡左侧导航栏），无返回按钮。
 class PlanetPage extends StatefulWidget {
-  const PlanetPage({super.key});
+  const PlanetPage({super.key, this.active = true});
+
+  /// 页面是否可见（IndexedStack 常驻，由宿主传 `_currentIndex == 2`）。
+  /// 可见时启动每 60 秒静默刷新后台星球数据；离开页面时自动停止轮询。
+  final bool active;
 
   @override
   State<PlanetPage> createState() => _PlanetPageState();
@@ -37,6 +41,12 @@ class _PlanetPageState extends State<PlanetPage> {
 
   /// 是否加载中
   bool _loading = true;
+
+  /// 60 秒静默刷新定时器（仅页面可见时运行）
+  Timer? _refreshTimer;
+
+  /// 防止静默刷新并发重入
+  bool _refreshing = false;
 
   /// 列表为空或加载失败时展示的兜底星球种子（保证始终有一颗星球可看）
   static const int _fallbackSeed = 74210366;
@@ -57,6 +67,39 @@ class _PlanetPageState extends State<PlanetPage> {
   void initState() {
     super.initState();
     _load();
+    // 首次创建即页面可见（IndexedStack 内嵌），启动 60 秒轮询
+    if (widget.active) _startRefreshTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant PlanetPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      // 切回探索页：立即静默刷新一次（有更新才动），并恢复轮询
+      _silentRefresh();
+      _startRefreshTimer();
+    } else if (!widget.active && oldWidget.active) {
+      // 离开探索页：停止轮询，避免后台空跑
+      _stopRefreshTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _stopRefreshTimer();
+    super.dispose();
+  }
+
+  /// 启动每 60 秒静默刷新（幂等）
+  void _startRefreshTimer() {
+    _refreshTimer ??= Timer.periodic(const Duration(seconds: 60), (_) {
+      _silentRefresh();
+    });
+  }
+
+  void _stopRefreshTimer() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
   }
 
   Future<void> _load() async {
@@ -103,24 +146,88 @@ class _PlanetPageState extends State<PlanetPage> {
   }
 
   /// 加载当前星球的寻人配置（find/config）
+  /// 仅在内容有变化时 setState 重建对应 UI（平滑：没有更新则无事发生）。
   Future<void> _loadFindConfig() async {
     final pid = _planetId;
     if (pid <= 0) return;
     if (_findLoading) return;
-    setState(() => _findLoading = true);
+    _findLoading = true;
     try {
       final resp = await ApiClient.instance.getFindConfig(planetId: pid);
       final body = jsonDecode(resp.body) as Map<String, dynamic>;
       if (body['code'] == 0 && mounted) {
-        setState(() {
-          _findConfig = body['data'] as Map<String, dynamic>?;
-        });
+        final data = body['data'] as Map<String, dynamic>?;
+        if (jsonEncode(data) != jsonEncode(_findConfig)) {
+          setState(() {
+            _findConfig = data;
+          });
+        }
       }
     } catch (_) {
       // 静默失败：保持上次配置，按钮仍可点击再次尝试
     } finally {
-      if (mounted) setState(() => _findLoading = false);
+      _findLoading = false;
     }
+  }
+
+  /// 静默刷新：拉取后台星球列表，深度对比后平滑更新对应部分。
+  /// 列表有变化 → 仅更新对应数据（保持当前展示的星球，数量变化时重定位）；
+  /// 列表无变化 → 仅顺带刷新当前星球寻人配置（内部内容相同不重建）。
+  Future<void> _silentRefresh() async {
+    if (_refreshing || _loading) return;
+    _refreshing = true;
+    try {
+      final resp = await ApiClient.instance.getPlanets();
+      final body = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (body['code'] == 0 && body['data'] is List && mounted) {
+        final list = (body['data'] as List)
+            .whereType<Map<String, dynamic>>()
+            .toList();
+        final oldLen = _planets.length;
+        if (!_samePlanetList(list, _planets)) {
+          // 保持当前展示的星球：按 id 在新列表定位，找不到则回到第一颗
+          final curId = _planetId;
+          var newIndex = 0;
+          if (list.isNotEmpty) {
+            final idx = list.indexWhere((p) =>
+                (p['id'] as num?)?.toInt() == curId);
+            newIndex = idx >= 0 ? idx : 0;
+          }
+          setState(() {
+            _planets = list;
+            _index = newIndex;
+          });
+          // 星球数量变化时需重定位无限 PageView（保持当前星球，避免页码越界）
+          if (oldLen != list.length) _relocatePage();
+        }
+        // 顺带刷新当前星球寻人配置（配对状态/费用/开关可能独立变化）
+        _loadFindConfig();
+      }
+    } catch (_) {
+      // 网络/解析失败：无事发生，保持现状
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  /// 两个星球列表是否逐项一致（键值顺序由接口固定，jsonEncode 足够精确）
+  bool _samePlanetList(List<Map<String, dynamic>> a, List<Map<String, dynamic>> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (jsonEncode(a[i]) != jsonEncode(b[i])) return false;
+    }
+    return true;
+  }
+
+  /// 星球数量变化后，将无限 PageView 重新定位到当前星球的页
+  void _relocatePage() {
+    if (!mounted || _planets.length < 2) return;
+    final base = 500 * _planets.length + _index;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_pageCtrl.hasClients) return;
+      _pageCtrl.jumpToPage(base);
+      _currentPage = base;
+    });
   }
 
   /// 当前星球种子（有列表取当前项，否则兜底）
