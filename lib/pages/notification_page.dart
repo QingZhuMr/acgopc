@@ -265,6 +265,17 @@ class _NotificationPageState extends State<NotificationPage> {
         return;
       }
     }
+    // type=6/7 配对成功 / 解除绑定通知 → 跳对方主页
+    if (type == 6 || type == 7) {
+      final fromUid = (n['from_uid'] as num?)?.toInt() ?? 0;
+      final fromName = n['from_nickname']?.toString() ?? '';
+      final fromAvatar = n['from_avatar']?.toString() ?? '';
+      final cb = widget.onOpenUserProfile;
+      if (fromUid > 0 && cb != null) {
+        cb(fromUid, fromName, fromAvatar);
+        return;
+      }
+    }
     await _openPost(n);
   }
 
@@ -589,6 +600,15 @@ class _NotificationPageState extends State<NotificationPage> {
       case 2:
         title = '$fromName 回复了你';
         break;
+      case 6:
+        // post_content 存的是星球名（配对成功）
+        title = postContent.isNotEmpty
+            ? '$fromName 在$postContent星球和你配对了'
+            : '$fromName 和你配对了';
+        break;
+      case 7:
+        title = '$fromName 解除了与你的绑定关系';
+        break;
       default:
         title = '$fromName 评论了你的动态';
     }
@@ -719,8 +739,8 @@ class _NotificationPageState extends State<NotificationPage> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ],
-                        // 次级小字：所在帖子内容
-                        if (postContent.isNotEmpty) ...[
+                        // 次级小字：所在帖子内容（type=6 的 post_content 是星球名已在标题展示，type=7 无内容）
+                        if (postContent.isNotEmpty && type != 6 && type != 7) ...[
                           const SizedBox(height: 6),
                           Container(
                             width: double.infinity,

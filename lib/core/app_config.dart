@@ -120,6 +120,36 @@ abstract final class AppConfig {
     }
   }
 
+  // ==================== 星球页 · 星星背景预设 ====================
+
+  /// 星星数量
+  static const int starCount = 120;
+
+  /// 星星整体漂移一圈耗时（秒）
+  static const int starDriftSeconds = 60;
+
+  /// 星星最小半径（像素）
+  static const double starMinRadius = 0.4;
+
+  /// 星星最大半径（像素）
+  static const double starMaxRadius = 2.5;
+
+  /// 星星最小亮度
+  static const double starMinAlpha = 0.30;
+
+  /// 星星最大亮度
+  static const double starMaxAlpha = 0.90;
+
+  /// 星星光晕半径系数（相对星核半径的倍数）
+  static const double starGlowRatio = 4.5;
+
+  /// 星星光晕透明度上限（0..1，防过曝）
+  static const double starGlowMaxAlpha = 0.30;
+
+  /// 星星速度系数范围（min..max）
+  static const double starSpeedMin = 0.7;
+  static const double starSpeedMax = 1.3;
+
   /// 完整接口 URL（拼接 apiBase + 相对路径）
   static String api(String path) => '$apiBase$path';
 

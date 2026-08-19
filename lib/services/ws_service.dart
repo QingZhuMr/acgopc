@@ -72,6 +72,10 @@ class WsService {
   /// 被关注通知回调（收到 follow_notice 推送，含 notification 对象）
   void Function(Map<String, dynamic> notification)? onFollowNotice;
 
+  /// 配对/解绑通知回调（收到 match_notice 推送，含 notification 对象）
+  /// type=6 配对成功 / type=7 解除绑定
+  void Function(Map<String, dynamic> notification)? onMatchNotice;
+
   /// 聊天消息流（收到 chat_message 推送，密文透传，客户端解密）
   final _chatMsgCtrl = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get onChatMessage => _chatMsgCtrl.stream;
@@ -300,6 +304,13 @@ class WsService {
         final notification = msg['notification'];
         if (notification is Map<String, dynamic>) {
           onFollowNotice?.call(notification);
+        }
+        break;
+
+      case 'match_notice':
+        final notification = msg['notification'];
+        if (notification is Map<String, dynamic>) {
+          onMatchNotice?.call(notification);
         }
         break;
 

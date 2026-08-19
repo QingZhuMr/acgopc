@@ -112,8 +112,19 @@ Row(
 ### 2.3 侧边导航
 - 自绘 `_MacRailItem`（图标 + 文字，左对齐，Finder 风格），顶部 Logo，中间为功能项，底部为通知 + 设置
 - **导航顺序与索引**：消息(0) → 广场(1) → **遇见(2)** → 我的(3) →（Spacer）→ 通知(4) → 设置(5)，`_navItems` 与 `_buildMacRail` 顺序一致，`IndexedStack.index = _currentIndex`
-- **「遇见」入口**（`MeetPage`，`Icons.public_rounded`（星球），`pages/meet_page.dart`）：位于广场下方、我的上方，随机邂逅用户功能；作为侧边栏 tab 内嵌展示（不遮挡左侧导航栏），无返回按钮，标题行间距与通知页一致（Win 距顶 5px / macOS 20px，左右 24px）
-- **「遇见」页内容**：程序化渲染的 **3D 彩色旋转地球**（`widgets/earth_globe.dart`，纯 Canvas 无外部资源）——经纬网格球面投影 + 23.5° 轴倾斜 + 环形谐波噪声生成海陆（海洋蓝径向渐变 + 彩色大陆：热带绿/黄绿/沙漠黄/棕/极地浅色）+ 自转动画（14s/圈，`AnimationController.repeat`）+ 左上高光 + 大气辉光；内容区居中，直径随可用空间 `clamp(220,360)`；**无任何占位图标/文字**
+- **「星球」入口**（`PlanetPage`，`pages/planet_page.dart`）：位于广场下方、我的上方；作为侧边栏 tab 内嵌展示（不遮挡左侧导航栏），无返回按钮，标题行间距与通知页一致（Win 距顶 5px / macOS 20px，左右 24px）。**名称「星球」，图标 = 地球图标 `public_rounded` + 自绘倾斜椭圆土星环**（`_MacRailItem.saturnRing` + `_SaturnRingPainter`：椭圆宽 1.55×、高 0.42×，`Transform.rotate(-0.35)`，颜色随选中态）
+- **「星球」页**（`PlanetPage`，`pages/planet_page.dart`，StatefulWidget）：进入时调 `api_client.getPlanets()`（`GET /planet/list`）拉取**后台创建的启用星球列表**（`{id, seed, type, name, intro}`，sort 升序）；星球主体 = 程序化生成的 Minecraft 方块星球（`widgets/planet_globe.dart` → `MinecraftPlanetGenerator(seed, style)`，低分辨率贴图 + FragmentShader `assets/shaders/planet_shader.frag` 球面映射、蓝色大气辉光）；**同一种子+类型 → 同一星球**，星球地形由 `seed` 决定、材质由后台所选 `type` 决定；**材质由 `PlanetStyle` 枚举决定**（`services/planet_generator.dart`，成员含后端 type 映射 `apiValue` + `fromApi` 解析）：
+  - `earth` 类地=蓝海/绿草地/白沙漠/极地冰雪
+  - `jupiter` 气态=木星式纬向条纹云带+大红斑（无海陆）
+  - `lava` 岩浆=熔岩海+亮橙熔岩陆块+黑曜石裂纹
+  - `rock` 岩石=灰蓝岩海+灰岩陆块（无植被）
+  - `gradient_green/blue/pink/red` 渐变色行星=渐变海+浅色渐变陆块（糖果风，统一色板 `_gradientPalette()`）
+  - `blackhole` 黑洞=全黑贴图+**橙色亮光晕**（shader `uGlowColor`/`uGlowStrength` uniform：黑洞橙 `0xFFFF8C1A`×1.2、其余蓝 `0xFF73ADFF`×0.5）+**不自转**（`PlanetGlobe` 按 style 控制自转动画启停）
+  - 材质解析优先级：接口 `type` → 白名单回退 `_styleBySeed`（seed→PlanetStyle，仅老数据兜底）→ 默认 `earth`；另有 `_stylePreviewAll` 临时全量预览开关（null=正常）
+  - **左右切换**：星球左右两侧各一个玻璃圆箭头（`_GlassBlock` + `chevron_left/right_rounded`，44×44 圆钮，`MouseRegion` hover 变小手；列表 ≤1 个时禁用置灰）；星球滑动区（`Positioned.fill`）**铺满整个页面内容区宽度**，切换时星球**从页面左右边缘滑出/滑入**；多颗星球用**无限循环 `PageView`**（`PageView.builder` 无 itemCount + `_pageCtrl` 初始页 500，`500*count` 恒为第一颗星球的页号，左右任意方向循环切换）——点击箭头 `animateToPage(current±1, 480ms, easeInOutCubic)` 平滑滑动：点左箭头当前星球**右滑出**、上一颗从**左侧滑入**，点右箭头反向（箭头固定在星球两侧：`sideGap=(总宽-星径)/2-箭头宽-12`）；切换时 `onPageChanged` 同步左下角名称/介绍（`_index = page % count`）；`allowImplicitScrolling` 预构建相邻页 + `PlanetGlobe` 静态贴图缓存（`_surfaceCache`，key=`seed_styleIndex`）保证滑动平滑不闪占位图；加载中（列表未返回）星球位置显示白色转圈
+  - **左下角卡片**：当前星球**名称**（16px/w700，前带 `public_rounded` 小图标）+ **介绍**（13px/浅色/最多 3 行 ellipsis），`_GlassBlock` 毛玻璃卡片（left 20/bottom 20，宽 300）；列表为空或加载失败时兜底展示固定种子星球（`_fallbackSeed=74210366`）且不显示左下角卡片
+  - 其余保留：背景 `0xFF03030A` 宇宙黑（白天 `0xFF0B1020`）+ **星空背景**（`widgets/starfield.dart`：120 颗多色星星缓慢右→左漂移，参数在 `AppConfig` star* 常量）；左上角标语+幸运值卡片；正下方「开始寻找」玻璃按钮（`_buildFindButton` 状态化：未开放=灰+「未开放」、寻找中=primary 实底+「寻找中…」、已配对=金+「已配对」、正常=毛玻璃+「开始寻找」；按钮下方辅助文案 `_findHint`：寻找中显示「正在 xx 星球寻找中」、已配对显示「已与 xx 绑定」）
+  - **「开始寻找」交互**：点击调 `find/config`（`api_client.getFindConfig`）取星球配置——未开放→warning 提示；已配对→`_showBindDetail` 绑定人卡片（头像/昵称/时间，按钮：去主页/解除绑定）；寻找中→`_showFindingHint` 提示当前星球+可停止；正常→弹 `FindFormDialog` 动态表单（`widgets/find_form_dialog.dart`，字段按星球 `find_fields` 渲染：性别/年龄必选 + 收入/性格/同城/颜值/学历可选，每项「我的资料 + 目标条件」双向配置，颜值用滑杆打分 `_scoreSlider`，我的资料首填后自动复用）；提交 `find/start` → 匹配成功弹 `_showMatched` 配对成功卡片（对方头像/昵称/星球，按钮：查看主页/开始聊天）+ 绑定关系建立；未匹配到则进入寻找中状态；`find/stop` 停止寻找；`find/unbind` 解除绑定（`AppDialog.confirm` 二次确认）；WS `match_notice` 实时推送时也弹 `_showMatched`
 - **选中态**：图标与文字均 `primary` 蓝，文字**不加粗**（w400），指示器 `primarySoft` 浅蓝底
 - **未选中态**：图标与文字均 `text`（白天黑 `#111827` / 夜晚白 `#F5F5F7`），与内容页主文字一致
 - **角标**：`badge` 参数（红色 `kDanger` 胶囊，99+ 封顶，`Positioned` 于图标右上角）——「消息」显示**聊天未读总数**（监听 `ChatStore.chatUnreadTick`）；「通知」显示**通知中心未读数**（`NotificationCenter.instance.unread`，`kPrimary` 铃铛高亮）
@@ -123,6 +134,7 @@ Row(
 - **折叠聚合展示**（后端 `notification/list` 未读聚合）：多条未读同一目标合并为一条，标题 `昵称1、昵称2等N人评论了你的动态`（点赞=赞了你的动态/收藏=收藏了你的动态/回复=回复了你/关注=关注了你，最多前 2 昵称 + 等N人）；聚合条目点击 → 聚合内全部标记已读 + 跳帖子；**已读**通知不聚合单条展示
 - **右键菜单**（`BubbleMenu` 气泡）：「多选删除」进入多选模式（点击条目勾选，顶栏显示删除所选(N)/取消）+「删除」删除本条（聚合条目删除整组）
 - **type=3 关注**：单条点击跳关注人主页；**聚合（多条未读关注）点击跳我的粉丝列表 tab=2**（`onOpenRelationList` → `RelationListPage`）
+- **type=6/7 配对/解除绑定**：type=6 标题 `xx 在「星球名」星球和你配对了`（`post_content` 为星球名，不显示次级帖子框）、type=7 标题 `xx 解除了与你的绑定关系`；点击均跳对方主页（`onOpenUserProfile`）
 - **未读标记**：未读左侧红点 + `primarySoft` 底色；进入后自动全部已读
 - 背景：实心 `bgSoft` 不透明（玻璃/半透明方案已于 2026-08-17 永久放弃，勿再引入 Acrylic/Mica）
 

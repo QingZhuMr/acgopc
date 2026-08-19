@@ -232,6 +232,20 @@ class ApiClient {
     return request.send().then((resp) => http.Response.fromStream(resp));
   }
 
+  /// 获取星球列表（公开接口：仅签名，游客可浏览）
+  ///
+  /// 返回后台创建的启用星球：{id, seed, name, intro}，按 sort 升序。
+  /// 客户端星球页据此展示名称/介绍，并按 seed 生成星球外观。
+  Future<http.Response> getPlanets() {
+    final path = '/planet/list';
+    return http.get(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
   /// 获取表情包列表（业务接口）：全局表情包 + 我上传的
   Future<http.Response> getStickerList() {
     final path = '/sticker/list';
@@ -984,6 +998,92 @@ class ApiClient {
         'Content-Type': 'application/x-www-form-urlencoded',
         ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
       },
+    );
+  }
+
+  // ============ 开始寻找（星球配对） ============
+
+  /// 获取星球的寻人配置 + 我的资料 + 我的状态（业务接口）
+  ///
+  /// 返回 data：
+  /// - enable_find：该星球是否开启寻找
+  /// - find_fields：需填写的参数（gender/age/income_range/personality/city/face_score/edu_level）
+  /// - force_face_auth / force_edu_auth / force_asset_auth：是否强制认证
+  /// - profile：我的资料（首填后自动复用，可修改）
+  /// - my_find：我当前寻找记录（status 0寻找中/1已配对/2已停止）
+  /// - my_bind：我的绑定关系（配对成功即绑定，解绑前禁再寻找）
+  /// - auth：我的认证状态（face_status/edu_status/asset_status）
+  Future<http.Response> getFindConfig({required int planetId}) {
+    final path = '/find/config';
+    final uri = Uri.parse(AppConfig.api(path)).replace(queryParameters: {
+      'planet_id': '$planetId',
+    });
+    return http.get(
+      uri,
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
+  /// 发起寻找（业务接口）
+  ///
+  /// 我的资料字段：my_gender(1男2女)/my_age/my_income_range/my_personality/my_city/my_face_score(1-10)/my_edu_level
+  /// 目标字段：target_gender(0不限1男2女)/target_age_min/target_age_max/
+  ///   target_income_range/target_personality/target_city/target_face_score/target_edu_level/target_same_city
+  /// 返回：配对成功时 data.status=1 + matched_user/bind；寻找中时 data.status=0
+  Future<http.Response> startFind({
+    required int planetId,
+    required Map<String, String> params,
+  }) {
+    final path = '/find/start';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {
+        'planet_id': '$planetId',
+        ...params,
+      },
+    );
+  }
+
+  /// 手动停止寻找（业务接口）
+  Future<http.Response> stopFind() {
+    final path = '/find/stop';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {},
+    );
+  }
+
+  /// 我的寻找/绑定状态（业务接口）
+  Future<http.Response> getFindStatus() {
+    final path = '/find/status';
+    return http.get(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+    );
+  }
+
+  /// 解除绑定（业务接口）：target_uid 为绑定对象
+  Future<http.Response> unbindFind({required int targetUid}) {
+    final path = '/find/unbind';
+    return http.post(
+      Uri.parse(AppConfig.api(path)),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        ..._signHeaders(path, deviceKey: DeviceService.instance.getDeviceKey()),
+      },
+      body: {'target_uid': '$targetUid'},
     );
   }
 

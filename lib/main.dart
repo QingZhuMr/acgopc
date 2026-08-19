@@ -38,7 +38,7 @@ import 'services/chat_store.dart';
 import 'services/post_draft_store.dart';
 import 'services/notification_center.dart';
 import 'pages/notification_page.dart';
-import 'pages/meet_page.dart';
+import 'pages/planet_page.dart';
 import 'utils/image_transcoder.dart';
 import 'widgets/bubble_menu.dart';
 import 'widgets/cached_avatar.dart';
@@ -293,6 +293,7 @@ class _AcgoPcAppState extends State<AcgoPcApp> {
       onMaintenance: _handleWsMaintenance,
       onReplyNotice: NotificationCenter.instance.handleWsReply,
       onFollowNotice: NotificationCenter.instance.handleWsFollow,
+      onMatchNotice: NotificationCenter.instance.handleWsMatch,
       // 断线重连成功后：补发聊天失败消息
       onReconnected: () => ChatService.instance.onReconnected(),
     );
@@ -528,11 +529,11 @@ class _HomePageState extends State<HomePage> {
   /// 非 macOS 恒为 null
   Widget? _macOverlay;
 
-  /// 通知 tab 索引（0=消息 1=广场 2=我的，通知=3）
-  int get _notificationIndex => 3;
+  /// 通知 tab 索引（0=消息 1=广场 2=遇见 3=我的，通知=4）
+  int get _notificationIndex => 4;
 
-  /// 设置 tab 索引（通知=3，设置=4）
-  int get _settingsIndex => 4;
+  /// 设置 tab 索引（通知=4，设置=5）
+  int get _settingsIndex => 5;
 
   @override
   void initState() {
@@ -633,11 +634,11 @@ class _HomePageState extends State<HomePage> {
             onOpenPost: _showPostOverlay,
           ),
         ),
-        // 遇见入口（广场下方、我的上方）：随机邂逅用户（当前为占位页）
+        // 星球入口（广场下方、我的上方）：3D 地球展示
         _NavItem(
           Icons.public_rounded,
-          '遇见',
-          const MeetPage(),
+          '星球',
+          const PlanetPage(),
         ),
         _NavItem(
           Icons.person_rounded,
@@ -863,12 +864,13 @@ class _HomePageState extends State<HomePage> {
           brightness: b,
           onTap: () => _switchTab(1),
         ),
-        // 导航项（遇见，广场下方、我的上方）
+        // 导航项（星球，广场下方、我的上方）：带土星环图标
         _MacRailItem(
           icon: Icons.public_rounded,
-          label: '遇见',
+          label: '探索',
           selected: _currentIndex == 2,
           brightness: b,
+          saturnRing: true,
           onTap: () => _switchTab(2),
         ),
         // 导航项（个人中心）
@@ -968,6 +970,9 @@ class _MacRailItem extends StatelessWidget {
   final bool selected;
   final Brightness brightness;
   final int badge;
+
+  /// 是否叠加"土星环"（星球导航专用）：在图标上叠加倾斜椭圆环
+  final bool saturnRing;
   final VoidCallback onTap;
 
   const _MacRailItem({
@@ -976,6 +981,7 @@ class _MacRailItem extends StatelessWidget {
     required this.selected,
     required this.brightness,
     this.badge = 0,
+    this.saturnRing = false,
     required this.onTap,
   });
 
@@ -1005,6 +1011,20 @@ class _MacRailItem extends StatelessWidget {
                       size: 20,
                       color: selected ? kPrimary : textColor(brightness),
                     ),
+                    // 土星环：倾斜椭圆环穿过星球图标
+                    if (saturnRing)
+                      Positioned.fill(
+                        child: Transform.rotate(
+                          angle: -0.35,
+                          child: CustomPaint(
+                            painter: _SaturnRingPainter(
+                              color: selected
+                                  ? kPrimary
+                                  : textColor(brightness),
+                            ),
+                          ),
+                        ),
+                      ),
                     if (badge > 0)
                       Positioned(
                         right: -8,
@@ -1045,6 +1065,34 @@ class _MacRailItem extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 土星环画笔：绘制一条穿过星球中心的倾斜椭圆环（星球导航图标用）
+class _SaturnRingPainter extends CustomPainter {
+  final Color color;
+
+  const _SaturnRingPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromCenter(
+      center: size.center(Offset.zero),
+      width: size.width * 1.55,
+      height: size.height * 0.42,
+    );
+    canvas.drawOval(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..color = color
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SaturnRingPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 /// 自绘顶栏：仅占右侧内容区，含窗口控制按钮，与左侧导航栏互不影响。
