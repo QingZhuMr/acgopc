@@ -39,6 +39,7 @@ class ProfileView extends StatefulWidget {
   final bool active;
 
   const ProfileView({
+    super.key,
     required this.user,
     required this.onLogout,
     required this.onUserChanged,
@@ -51,7 +52,7 @@ class ProfileView extends StatefulWidget {
 
 class ProfileViewState extends State<ProfileView> {
   /// 当前用户信息（持有同一 map 引用）
-  late Map<String, dynamic> _user = widget.user;
+  late final Map<String, dynamic> _user = widget.user;
 
   /// 是否封禁
   bool get _banned => (_user['banned'] as bool?) ?? false;
@@ -66,8 +67,9 @@ class ProfileViewState extends State<ProfileView> {
   /// 手机号（脱敏展示后四位）
   String get _phone {
     final p = (_user['phone'] as String?) ?? '';
-    if (p.length >= 7)
+    if (p.length >= 7) {
       return '${p.substring(0, 3)}****${p.substring(p.length - 4)}';
+    }
     return p.isEmpty ? '' : p;
   }
 
@@ -1198,6 +1200,7 @@ class ProfileViewState extends State<ProfileView> {
         NotifyStack.warning('头像图片不能超过5MB', title: '提示');
         return;
       }
+      if (!mounted) return;
 
       // 打开裁剪对话框
       final cropped = await AvatarCropDialog.show(context, sourceBytes);
@@ -1272,7 +1275,7 @@ class ProfileViewState extends State<ProfileView> {
         });
       }
       widget.onUserChanged(Map<String, dynamic>.from(_user));
-      Navigator.pop(dialogCtx);
+      if (dialogCtx.mounted) Navigator.pop(dialogCtx);
       NotifyStack.success('资料已更新', title: '成功');
     } catch (e) {
       // 展示真实错误，便于排查（不再笼统提示"请检查网络"）

@@ -112,11 +112,12 @@ class HomeViewState extends State<HomeView>
       setState(() => _loadFailed = true);
       NotifyStack.warning('加载失败：$e');
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _refreshing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 

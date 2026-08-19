@@ -9,6 +9,7 @@ import '../../core/app_theme.dart';
 import '../../widgets/bubble_menu.dart';
 import '../../widgets/notify.dart';
 import '../../widgets/report_dialog.dart';
+import '../../widgets/secondary_title_bar.dart';
 import '../../widgets/user_avatar.dart';
 import '../home/home_page.dart';
 import '../home/masonry_grid.dart';
@@ -211,6 +212,42 @@ class _UserProfilePageState extends State<UserProfilePage> {
   }
 
   /// 拉黑关系占位标签（不能关注，展示"已被拉黑"）
+  /// 聊天按钮（仅互相关注时显示）：点击打开与该用户的聊天会话
+  Widget _buildChatButton(Brightness b) {
+    return InkWell(
+      onTap: () {
+        if (HomePageState.current?.mounted == true) {
+          HomePageState.current!.openChatWithPeer(widget.targetUid);
+        }
+      },
+      mouseCursor: SystemMouseCursors.click,
+      borderRadius: BorderRadius.circular(kRadiusFull),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: primarySoftColor(b),
+          borderRadius: BorderRadius.circular(kRadiusFull),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.chat_bubble_outline_rounded,
+                size: 15, color: kPrimary),
+            const SizedBox(width: 4),
+            Text(
+              '聊天',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: kPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildBlockedTag(Brightness b) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
@@ -288,9 +325,8 @@ class _UserProfilePageState extends State<UserProfilePage> {
     );
   }
 
-  /// 标题栏：与帖子详情页等二级页面一致（embedded：高 48、水平 8px、
-  /// macOS 风格返回按钮 40x40/kRadiusMd 圆角/arrow_back_ios_new_rounded 16px、
-  /// 标题 15px/w600），标题为「昵称的主页」；右上角省略号气泡 = 举报
+  /// 标题栏：统一复用 SecondaryTitleBar 组件（二级页面通用嵌入式标题栏），
+  /// 标题为「昵称的主页」；右上角省略号气泡 = 举报
   Widget _buildTitleBar(Brightness b, BuildContext context) {
     final title = Text(
       '${widget.nickname}的主页',
@@ -302,67 +338,30 @@ class _UserProfilePageState extends State<UserProfilePage> {
       ),
     );
     if (widget.embedded) {
-      // 布局与"我的"页 PageScaffold 完全一致：Expanded(title) + 末尾省略号。
-      // width: double.infinity 强制撑满 cross axis —— 根因修复：原 SizedBox 未设宽，
-      // 在 Column(crossAxisAlignment: start) 下收缩为内容宽 → Row 不撑满 →
-      // Expanded/Spacer 失效 → 省略号紧跟标题（看起来"前移"，与弹出层无关）。
-      return SizedBox(
-        height: 48,
-        width: double.infinity,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.max,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // macOS 风格返回按钮
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(kRadiusMd),
-                  onTap: () {
-                    if (widget.onBack != null) {
-                      widget.onBack!();
-                    } else {
-                      Navigator.of(context).maybePop();
-                    }
-                  },
-                  mouseCursor: SystemMouseCursors.click,
-                  hoverColor: bgHoverColor(b),
-                  child: Center(
-                    // 图标下移 1px，与 15px 标题文字视觉中线对齐（Material 箭头基线偏上）
-                    child: Transform.translate(
-                      offset: const Offset(0, 1),
-                      child: Icon(Icons.arrow_back_ios_new_rounded,
-                          size: 16, color: textMutedColor(b)),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              // 标题占满中间空隙（同 PageScaffold），省略号被推到最右
-              Expanded(child: title),
-              // 右上角省略号：气泡弹出举报
-              BubbleMenu(
-                width: 140,
-                items: [
-                  BubbleMenuItem(
-                    label: '举报',
-                    icon: Icons.flag_outlined,
-                    color: kDanger,
-                    onTap: _reportUser,
-                  ),
-                ],
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child:
-                      Icon(Icons.more_horiz, size: 22, color: textColor(b)),
-                ),
+      // 统一走 SecondaryTitleBar 组件（所有二级页面共用，保证样式一致）。
+      // width: double.infinity 撑满逻辑在组件内部，避免 Column(crossAxisAlignment:
+      // start) 下 Row 收缩导致省略号"前移"。
+      return SecondaryTitleBar(
+        title: title,
+        onBack: widget.onBack ?? () => Navigator.of(context).maybePop(),
+        actions: [
+          // 右上角省略号：气泡弹出举报
+          BubbleMenu(
+            width: 140,
+            items: [
+              BubbleMenuItem(
+                label: '举报',
+                icon: Icons.flag_outlined,
+                color: kDanger,
+                onTap: _reportUser,
               ),
             ],
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(Icons.more_horiz, size: 22, color: textColor(b)),
+            ),
           ),
-        ),
+        ],
       );
     }
     // 全屏模式（理论不触发，他人主页默认 embedded）
@@ -475,7 +474,17 @@ class _UserProfilePageState extends State<UserProfilePage> {
                                   const SizedBox(width: 12),
                                   _blocked
                                       ? _buildBlockedTag(b)
-                                      : _buildFollowButton(b),
+                                      : Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            // 聊天按钮：仅互相关注时显示
+                                            if (_isMutual) ...[
+                                              _buildChatButton(b),
+                                              const SizedBox(width: 8),
+                                            ],
+                                            _buildFollowButton(b),
+                                          ],
+                                        ),
                                 ],
                               ),
                             ),

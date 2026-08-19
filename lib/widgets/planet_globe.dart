@@ -187,9 +187,9 @@ class _PlanetPainter extends CustomPainter {
     s.setFloat(0, rotation); // uRot
     s.setFloat(1, size.width); // uSize.x
     s.setFloat(2, size.height); // uSize.y
-    s.setFloat(3, glowColor.red / 255.0); // uGlowColor.r
-    s.setFloat(4, glowColor.green / 255.0); // uGlowColor.g
-    s.setFloat(5, glowColor.blue / 255.0); // uGlowColor.b
+    s.setFloat(3, glowColor.r); // uGlowColor.r
+    s.setFloat(4, glowColor.g); // uGlowColor.g
+    s.setFloat(5, glowColor.b); // uGlowColor.b
     s.setFloat(6, glowStrength); // uGlowStrength
     s.setImageSampler(0, img); // uSurface -> sampler 0
 

@@ -6,6 +6,7 @@ import 'package:silky_scroll/silky_scroll.dart';
 import '../core/api_client.dart';
 import '../core/app_theme.dart';
 import '../widgets/notify.dart';
+import '../widgets/secondary_title_bar.dart';
 
 /// 隐私设置页
 ///
@@ -253,55 +254,22 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
   ///
   /// embedded（内容区覆盖）：与 PublishPostPage 内嵌模式一致——高 48、
   /// 水平 8px、标题 15px/w600、macOS 风格返回按钮（40x40、kRadiusMd 圆角、
-  /// arrow_back_ios_new_rounded 16px）。顶部距离由宿主 _TitleBar 承担。
+  /// 标题栏：embedded 统一复用 SecondaryTitleBar（二级页面通用嵌入式标题栏）。
   ///
   /// 全屏模式：返回按钮 + 标题，遵守双端顶部距离规范
   /// （Win 顶距 5px / macOS 20px，标题 20px/w600，左右 24px）。
   Widget _buildTitleBar(Brightness b, BuildContext context) {
     if (widget.embedded) {
-      return SizedBox(
-        height: 48,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            children: [
-              // macOS 风格返回按钮
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(kRadiusMd),
-                  onTap: () {
-                    if (widget.onBack != null) {
-                      widget.onBack!();
-                    } else {
-                      Navigator.of(context).maybePop();
-                    }
-                  },
-                  mouseCursor: SystemMouseCursors.click,
-                  hoverColor: bgHoverColor(b),
-                  child: Center(
-                    // 图标下移 1px，与 15px 标题文字视觉中线对齐（Material 箭头基线偏上）
-                    child: Transform.translate(
-                      offset: const Offset(0, 1),
-                      child: Icon(Icons.arrow_back_ios_new_rounded,
-                          size: 16, color: textMutedColor(b)),
-                    ),
-                  ),
-                ),
-              ),
-              Text(
-                '隐私设置',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: textColor(b),
-                ),
-              ),
-              const Spacer(),
-            ],
+      return SecondaryTitleBar(
+        title: Text(
+          '隐私设置',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: textColor(b),
           ),
         ),
+        onBack: widget.onBack ?? () => Navigator.of(context).maybePop(),
       );
     }
 

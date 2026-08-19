@@ -3,8 +3,6 @@ import 'package:acgopc/services/chat_crypto.dart';
 
 void main() {
   test('ChatCrypto 加解密往返', () {
-    // A 生成密钥对
-    final a = ChatCrypto.generateKeyPair();
     // B 生成密钥对
     final b = ChatCrypto.generateKeyPair();
 

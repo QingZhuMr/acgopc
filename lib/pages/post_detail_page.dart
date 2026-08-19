@@ -20,6 +20,7 @@ import '../utils/net_image.dart';
 import '../utils/time_format.dart';
 import '../utils/text_sanitize.dart';
 import '../widgets/report_dialog.dart';
+import '../widgets/secondary_title_bar.dart';
 import '../widgets/text_input_menu.dart';
 
 /// 帖子详情页（广场动态内容页，参考小红书 PC 端）
@@ -576,7 +577,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
 
   /// 选择评论图片（最多 1 张，重新选择覆盖之前的）
   Future<void> _pickImages() async {
-    if (_pendingImages.length >= 1) {
+    if (_pendingImages.isNotEmpty) {
       NotifyStack.warning('评论最多上传1张图片', title: '提示');
       return;
     }
@@ -637,44 +638,12 @@ class _PostDetailPageState extends State<PostDetailPage> {
         color: textColor(b),
       ),
     );
-    // macOS 内嵌模式：保留返回按钮（返回上一层），无红黄绿安全区、无窗口按钮
+    // macOS 内嵌模式：保留返回按钮（返回上一层），无红黄绿安全区、无窗口按钮。
+    // 统一复用 SecondaryTitleBar（二级页面通用嵌入式标题栏，样式与各入口一致）
     if (widget.embedded) {
-      return SizedBox(
-        height: 48,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            children: [
-              // macOS 风格返回按钮
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(kRadiusMd),
-                  onTap: () {
-                    if (widget.onBack != null) {
-                      widget.onBack!();
-                    } else {
-                      Navigator.of(context).maybePop();
-                    }
-                  },
-                  mouseCursor: SystemMouseCursors.click,
-                  hoverColor: bgHoverColor(b),
-                  child: Center(
-                    // 图标下移 1px，与 15px 标题文字视觉中线对齐（Material 箭头基线偏上）
-                    child: Transform.translate(
-                      offset: const Offset(0, 1),
-                      child: Icon(Icons.arrow_back_ios_new_rounded,
-                          size: 16, color: textMutedColor(b)),
-                    ),
-                  ),
-                ),
-              ),
-              title,
-              const Spacer(),
-            ],
-          ),
-        ),
+      return SecondaryTitleBar(
+        title: title,
+        onBack: widget.onBack,
       );
     }
     final back = SizedBox(
@@ -1032,13 +1001,13 @@ class _PostDetailPageState extends State<PostDetailPage> {
             ),
           )
         else
-          for (var _ci = 0; _ci < _comments.length; _ci++)
+          for (var i = 0; i < _comments.length; i++)
             Builder(builder: (ctx) {
-              final c = _comments[_ci];
+              final c = _comments[i];
               // 抖音式头像合并：连续同作者且前一条无楼中楼时隐藏头像
-              final prev = _ci > 0 ? _comments[_ci - 1] : null;
+              final prev = i > 0 ? _comments[i - 1] : null;
               final prevChildren = ((prev?['children'] as List<dynamic>?) ?? []);
-              final showAvatar = _ci == 0 ||
+              final showAvatar = i == 0 ||
                   (prev?['user_id'] as num?)?.toInt() !=
                       (c['user_id'] as num?)?.toInt() ||
                   prevChildren.isNotEmpty;
@@ -1625,7 +1594,7 @@ class _CommentItem extends StatelessWidget {
     final location = comment['location']?.toString() ?? '';
     final isLiked = (comment['is_liked'] as bool?) ?? false;
     final likeCount = (comment['like_count'] as num?)?.toInt() ?? 0;
-    final _commentImages = ((comment['images'] as List<dynamic>?) ?? [])
+    final commentImages = ((comment['images'] as List<dynamic>?) ?? [])
         .map((e) => e.toString())
         .where((s) => s.isNotEmpty)
         .toList();
@@ -1669,8 +1638,8 @@ class _CommentItem extends StatelessWidget {
                 height: 1.6,
               ),
             ),
-            imagesWidget: _commentImages.isNotEmpty
-                ? _buildCommentImages(context, b, _commentImages)
+            imagesWidget: commentImages.isNotEmpty
+                ? _buildCommentImages(context, b, commentImages)
                 : null,
             timeText: formatTimeWithLocation(timeText, location: location),
             hasLike: true,

@@ -1,5 +1,3 @@
-import 'dart:collection';
-
 import '../core/app_config.dart';
 import '../controllers/system_notifier.dart';
 import '../widgets/notify.dart';
@@ -32,7 +30,7 @@ class ChatNotifier {
   bool _active = false;
 
   /// 已通知消息去重（按 msg_id，保留最近 [maxNotified] 条防止无限增长）
-  final Set<int> _notifiedMsgIds = LinkedHashSet<int>();
+  final Set<int> _notifiedMsgIds = <int>{};
   static const int maxNotified = 500;
 
   /// 启动通知（登录成功后调用）

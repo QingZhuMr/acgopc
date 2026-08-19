@@ -32,16 +32,16 @@ class BubbleMenuManager {
 
   static final BubbleMenuManager instance = BubbleMenuManager._();
 
-  _BubbleMenuOverlay? _current;
+  BubbleMenuOverlay? _current;
 
   /// 注册当前打开的气泡（关闭旧的）
-  void register(_BubbleMenuOverlay overlay) {
+  void register(BubbleMenuOverlay overlay) {
     _current?.close();
     _current = overlay;
   }
 
   /// 取消注册（当前气泡自己关闭时调用）
-  void unregister(_BubbleMenuOverlay overlay) {
+  void unregister(BubbleMenuOverlay overlay) {
     if (_current == overlay) _current = null;
   }
 
@@ -120,7 +120,7 @@ class BubbleMenu extends StatefulWidget {
 
 class BubbleMenuState extends State<BubbleMenu> {
   final GlobalKey _anchorKey = GlobalKey();
-  _BubbleMenuOverlay? _overlay;
+  BubbleMenuOverlay? _overlay;
 
   /// 触发时的指针全局坐标（右键/左键点击位置），用于菜单跟随鼠标
   Offset? _triggerPos;
@@ -151,7 +151,7 @@ class BubbleMenuState extends State<BubbleMenu> {
     _triggerPos = pos;
     widget.onOpenChange?.call(true);
     final overlay = Overlay.of(context);
-    setState(() => _overlay = _BubbleMenuOverlay.pending());
+    setState(() => _overlay = BubbleMenuOverlay.pending());
     // 通过 nextFrame 确保 anchor 已布局，再定位
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_isOpen) return;
@@ -217,10 +217,11 @@ class BubbleMenuState extends State<BubbleMenu> {
 }
 
 /// 气泡 Overlay 控制器（记录 entry，负责移除）
-class _BubbleMenuOverlay {
+/// 仅供 [BubbleMenu]/[BubbleMenuManager] 内部使用（公开类型以匹配公开 API 签名）。
+class BubbleMenuOverlay {
   OverlayEntry? entry;
 
-  _BubbleMenuOverlay.pending();
+  BubbleMenuOverlay.pending();
 
   void close() {
     BubbleMenuManager.instance.unregister(this);

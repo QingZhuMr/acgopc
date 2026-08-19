@@ -245,7 +245,6 @@ class _ChasePainter extends CustomPainter {
       ..strokeWidth = 1.5;
 
     // 腿（左右交替摆动）
-    final legPaint = blue;
     canvas.drawLine(Offset(x, cy + bodyH * 0.4), Offset(x - bodyH * 0.12, groundY + swing * bodyH * 0.12), blue..strokeWidth = 4);
     canvas.drawLine(Offset(x, cy + bodyH * 0.4), Offset(x + bodyH * 0.12, groundY - swing * bodyH * 0.12), blue..strokeWidth = 4);
 

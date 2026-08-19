@@ -6,6 +6,7 @@ import '../core/app_config.dart';
 import '../core/app_theme.dart';
 import '../utils/net_image.dart';
 import '../widgets/notify.dart';
+import '../widgets/secondary_title_bar.dart';
 
 /// 关系列表页（二级页面规范：高 48 标题栏 + 15px/w600 标题 + macOS 风格返回按钮）
 ///
@@ -200,50 +201,18 @@ class _RelationListPageState extends State<RelationListPage> {
     );
   }
 
-  /// 标题栏：二级页面规范（高 48、水平 8px、macOS 风格返回按钮、15px/w600 标题）
+  /// 标题栏：统一复用 SecondaryTitleBar（二级页面通用嵌入式标题栏）
   Widget _buildTitleBar(Brightness b, BuildContext context) {
-    return SizedBox(
-      height: 48,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 40,
-              height: 40,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(kRadiusMd),
-                onTap: () {
-                  if (widget.onBack != null) {
-                    widget.onBack!();
-                  } else {
-                    Navigator.of(context).maybePop();
-                  }
-                },
-                mouseCursor: SystemMouseCursors.click,
-                hoverColor: bgHoverColor(b),
-                child: Center(
-                  child: Transform.translate(
-                    offset: const Offset(0, 1),
-                    child: Icon(Icons.arrow_back_ios_new_rounded,
-                        size: 16, color: textMutedColor(b)),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '我的关注',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: textColor(b),
-              ),
-            ),
-            const Spacer(),
-          ],
+    return SecondaryTitleBar(
+      title: Text(
+        '我的关注',
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: textColor(b),
         ),
       ),
+      onBack: widget.onBack ?? () => Navigator.of(context).maybePop(),
     );
   }
 
@@ -351,6 +320,9 @@ class _RelationListPageState extends State<RelationListPage> {
         return false;
       },
       child: SilkyListView(
+        scrollSpeed: 1.6,
+        silkyScrollDuration: const Duration(milliseconds: 600),
+        animationCurve: Curves.easeOutCubic,
         children: [
           for (final u in list) _buildUserItem(b, u),
           if (_allLoaded[tab] != true)
@@ -365,9 +337,6 @@ class _RelationListPageState extends State<RelationListPage> {
               ),
             ),
         ],
-        scrollSpeed: 1.6,
-        silkyScrollDuration: const Duration(milliseconds: 600),
-        animationCurve: Curves.easeOutCubic,
       ),
     );
   }

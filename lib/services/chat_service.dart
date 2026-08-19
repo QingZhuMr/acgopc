@@ -245,7 +245,7 @@ class ChatService {
   Timer? _retryTimer;
   bool _retrying = false;
   int _retryDelay = 1; // 秒，指数退避 1→2→4→8→16→30 封顶
-  final Set<int> _retryingChatIds = {};
+  final Set<String> _retryingChatIds = <String>{};
 
   /// 发送失败/超时后触发自动重试（指数退避）
   void _scheduleRetry() {

@@ -10,6 +10,7 @@ import '../core/app_config.dart';
 import '../core/app_theme.dart';
 import '../widgets/notify.dart';
 import '../widgets/pick_images.dart';
+import '../widgets/secondary_title_bar.dart';
 import 'post_detail_page.dart';
 import '../services/post_draft_store.dart';
 import '../utils/image_transcoder.dart';
@@ -305,44 +306,12 @@ class _PublishPostPageState extends State<PublishPostPage> {
         color: textColor(b),
       ),
     );
-    // macOS 内嵌模式：保留返回按钮（返回上一层），无红黄绿安全区、无窗口按钮
+    // macOS 内嵌模式：保留返回按钮（返回上一层），无红黄绿安全区、无窗口按钮。
+    // 统一复用 SecondaryTitleBar（二级页面通用嵌入式标题栏，样式与各入口一致）
     if (widget.embedded) {
-      return SizedBox(
-        height: 48,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            children: [
-              // macOS 风格返回按钮
-              SizedBox(
-                width: 40,
-                height: 40,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(kRadiusMd),
-                  onTap: () {
-                    if (widget.onBack != null) {
-                      widget.onBack!();
-                    } else {
-                      Navigator.of(context).maybePop();
-                    }
-                  },
-                  mouseCursor: SystemMouseCursors.click,
-                  hoverColor: bgHoverColor(b),
-                  child: Center(
-                    // 图标下移 1px，与 15px 标题文字视觉中线对齐（Material 箭头基线偏上）
-                    child: Transform.translate(
-                      offset: const Offset(0, 1),
-                      child: Icon(Icons.arrow_back_ios_new_rounded,
-                          size: 16, color: textMutedColor(b)),
-                    ),
-                  ),
-                ),
-              ),
-              title,
-              const Spacer(),
-            ],
-          ),
-        ),
+      return SecondaryTitleBar(
+        title: title,
+        onBack: widget.onBack,
       );
     }
     final back = SizedBox(

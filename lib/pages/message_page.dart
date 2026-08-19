@@ -70,6 +70,9 @@ class MessagePageState extends State<MessagePage> {
   bool _loading = false;
   bool _loadFailed = false;
 
+  /// 绑定关系（配对成功）用户 ID 集合：会话列表强制置顶、不可删除、昵称旁"绑定"标签
+  final Set<int> _bindUids = {};
+
   /// 左侧视图：0=会话 1=好友
   int _viewMode = 0;
 
@@ -464,6 +467,15 @@ class MessagePageState extends State<MessagePage> {
         r['peer_avatar'] = f['avatar']?.toString() ?? '';
       }
     }
+    // 4) 绑定关系会话强制置顶（同组内按最后消息时间倒序）
+    list.sort((a, b) {
+      final aBind = _bindUids.contains((a['peer_id'] as num?)?.toInt() ?? 0);
+      final bBind = _bindUids.contains((b['peer_id'] as num?)?.toInt() ?? 0);
+      if (aBind != bBind) return aBind ? -1 : 1;
+      final ta = (a['last_msg_time'] as num?)?.toInt() ?? 0;
+      final tb = (b['last_msg_time'] as num?)?.toInt() ?? 0;
+      return tb.compareTo(ta);
+    });
     setState(() => _conversations = list);
   }
 
@@ -504,6 +516,14 @@ class MessagePageState extends State<MessagePage> {
         _friends
           ..clear()
           ..addAll(all);
+        // 收集绑定关系 uid（后端 friends 接口 is_bind=1）→ 会话置顶/标签/禁删
+        _bindUids
+          ..clear()
+          ..addAll(all
+              .where((f) => (f['is_bind'] ?? 0) == 1)
+              .map((f) => (f['user_id'] as num?)?.toInt())
+              .whereType<int>()
+              .where((id) => id > 0));
         _loading = false;
       });
       // 好友信息已就绪：刷新会话列表以补全昵称/头像
@@ -1855,6 +1875,9 @@ class MessagePageState extends State<MessagePage> {
         return _searchEmpty(b, '没有找到相关的会话或消息');
       }
       return SilkyListView(
+        scrollSpeed: 1.6,
+        silkyScrollDuration: const Duration(milliseconds: 600),
+        animationCurve: Curves.easeOutCubic,
         children: [
           if (convs.isNotEmpty) ...[
             _searchSectionTitle(b, '会话'),
@@ -1865,9 +1888,6 @@ class MessagePageState extends State<MessagePage> {
             for (final m in msgs) _buildMessageSearchItem(b, m),
           ],
         ],
-        scrollSpeed: 1.6,
-        silkyScrollDuration: const Duration(milliseconds: 600),
-        animationCurve: Curves.easeOutCubic,
       );
     }
     if (_conversations.isEmpty) {
@@ -1891,16 +1911,36 @@ class MessagePageState extends State<MessagePage> {
       );
     }
     return SilkyListView(
-      children: [
-        for (final c in _conversations) _buildConversationItem(b, c),
-      ],
       scrollSpeed: 1.6,
       silkyScrollDuration: const Duration(milliseconds: 600),
       animationCurve: Curves.easeOutCubic,
+      children: [
+        for (final c in _conversations) _buildConversationItem(b, c),
+      ],
     );
   }
 
   /// 会话项：头像 + 昵称 + 最后消息 + 未读 + 时间；右键删除会话
+  /// "绑定"关系标签（配对成功）：昵称左侧的小胶囊标记，会话/聊天顶部/好友列表共用
+  Widget _buildBindTag(Brightness b) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: primarySoftColor(b),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        '绑定',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: kPrimary,
+          height: 1.2,
+        ),
+      ),
+    );
+  }
+
   Widget _buildConversationItem(Brightness b, Map<String, dynamic> c) {
     final peerId = (c['peer_id'] as num?)?.toInt() ?? 0;
     final nickname = c['peer_nickname']?.toString() ?? '';
@@ -1924,6 +1964,8 @@ class MessagePageState extends State<MessagePage> {
     // 在线状态从好友列表实时取（会话本地缓存无 online 字段）
     final peerOnline =
         (_friendMap()[peerId]?['online'] ?? false) == true;
+    // 绑定关系会话：强制置顶（排序在 _loadConversations 完成）且不可删除
+    final isBind = _bindUids.contains(peerId);
     final friend = {
       'user_id': peerId,
       'nickname': displayName,
@@ -1934,10 +1976,11 @@ class MessagePageState extends State<MessagePage> {
       triggerOnRightClick: true,
       // 宽度按最长菜单项文字自适应
       items: [
-        // 删除会话（空对话人彻底删除，正常会话仅隐藏）
-        BubbleMenuItem.delete('删除会话', onTap: () {
-          _confirmDeleteConversation(peerId, chatId, isEmptyPeer);
-        }),
+        // 删除会话（绑定关系强制置顶，不可删除；空对话人彻底删除，正常会话仅隐藏）
+        if (!isBind)
+          BubbleMenuItem.delete('删除会话', onTap: () {
+            _confirmDeleteConversation(peerId, chatId, isEmptyPeer);
+          }),
       ],
       child: InkWell(
         onTap: isEmptyPeer
@@ -1968,6 +2011,9 @@ class MessagePageState extends State<MessagePage> {
                   children: [
                     Row(
                       children: [
+                        // 绑定关系：昵称左侧"绑定"标签
+                        if (isBind) _buildBindTag(b),
+                        if (isBind) const SizedBox(width: 6),
                         Expanded(
                           // fit:loose + 文字 ellipsis：避免时间文字浮点累计造成 1px 溢出
                           child: Text(
@@ -2094,10 +2140,10 @@ class MessagePageState extends State<MessagePage> {
         return _searchEmpty(b, '没有找到相关好友');
       }
       return SilkyListView(
-        children: [for (final friend in filtered) _buildFriendItem(b, friend)],
         scrollSpeed: 1.6,
         silkyScrollDuration: const Duration(milliseconds: 600),
         animationCurve: Curves.easeOutCubic,
+        children: [for (final friend in filtered) _buildFriendItem(b, friend)],
       );
     }
     if (_loading && _friends.isEmpty) {
@@ -2149,6 +2195,9 @@ class MessagePageState extends State<MessagePage> {
     return Stack(
       children: [
         SilkyListView(
+          scrollSpeed: 1.6,
+          silkyScrollDuration: const Duration(milliseconds: 600),
+          animationCurve: Curves.easeOutCubic,
           children: [
             for (final entry in groups.entries) ...[
               Container(
@@ -2167,9 +2216,6 @@ class MessagePageState extends State<MessagePage> {
               for (final friend in entry.value) _buildFriendItem(b, friend),
             ],
           ],
-          scrollSpeed: 1.6,
-          silkyScrollDuration: const Duration(milliseconds: 600),
-          animationCurve: Curves.easeOutCubic,
         ),
         // 右侧字母索引条（微信风格）
         Positioned(
@@ -2245,6 +2291,9 @@ class MessagePageState extends State<MessagePage> {
     // 有备注时显示备注名（微信风格）
     final remark = friend['remark']?.toString() ?? '';
     final displayName = remark.isNotEmpty ? remark : nickname;
+    // 绑定关系（配对成功）：昵称左侧"绑定"标签
+    final isBind =
+        _bindUids.contains((friend['user_id'] as num?)?.toInt() ?? 0);
     return InkWell(
       onTap: () => _selectFriend(friend),
       hoverColor: bgHoverColor(b),
@@ -2267,14 +2316,22 @@ class MessagePageState extends State<MessagePage> {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                displayName,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: textColor(b),
-                ),
+              child: Row(
+                children: [
+                  if (isBind) _buildBindTag(b),
+                  if (isBind) const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      displayName,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: textColor(b),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -2358,6 +2415,9 @@ class MessagePageState extends State<MessagePage> {
     }
     final nickname = friend['nickname']?.toString() ?? '';
     final avatar = friend['avatar']?.toString() ?? '';
+    // 绑定关系：昵称旁"绑定"标签（与会话列表样式一致）
+    final isBind =
+        _bindUids.contains((friend['user_id'] as num?)?.toInt() ?? 0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2380,13 +2440,20 @@ class MessagePageState extends State<MessagePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    nickname,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: textColor(b),
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isBind) _buildBindTag(b),
+                      if (isBind) const SizedBox(width: 6),
+                      Text(
+                        nickname,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: textColor(b),
+                        ),
+                      ),
+                    ],
                   ),
                   // 在线状态/正在输入（固定高度占位，切换时不推挤昵称位置）
                   SizedBox(
@@ -2869,10 +2936,10 @@ class MessagePageState extends State<MessagePage> {
     return SilkyListView(
       controller: _msgScrollCtrl,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      children: children,
       scrollSpeed: 1.6,
       silkyScrollDuration: const Duration(milliseconds: 600),
       animationCurve: Curves.easeOutCubic,
+      children: children,
     );
   }
 

@@ -33,6 +33,7 @@ macOS 与 Windows 双端，顶部栏存在差异（其余布局/颜色/圆角/�
 - 双端统一通过 `_HomePageState._macOverlay`（内容区覆盖层）实现，**不再使用 Navigator.push 全屏**打开二级页面。广场详情、收藏详情、发帖、发帖成功后的新帖详情、通知页、通知/推送跳详情，均走内容区覆盖。
 - 通知页在双端均为**侧边栏 tab**（不 push）。
 - 从通知/消息进入帖子详情时，**保留左侧导航栏**，并支持定位到对应评论位置。
+- **二级页面嵌入式标题栏统一封装为 `SecondaryTitleBar`**（`widgets/secondary_title_bar.dart`）：高 48、水平 padding 8、macOS 风格返回按钮 40x40/`kRadiusMd` 圆角/`arrow_back_ios_new_rounded` 16px、标题 15px/w600 由 `Expanded` 占满（省略号推至最右）。帖子详情、发帖页、他人主页、关系列表、隐私设置均复用该组件（内部 `width: double.infinity` 强制撑满 cross axis，避免 `Column(crossAxisAlignment: start)` 下 Row 收缩导致省略号"前移"）。全屏模式（独立窗口）标题栏带窗口按钮/拖拽区，属"特殊约定"由各页面自行实现。
 
 ---
 
@@ -376,6 +377,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
     - **输入框行**：多行 TextField 占满整行（左侧无按钮留白），视觉高度 **4 行**（固定高度，实际满 4 行后**内部滚动**）；右侧留白 40px 避免被右上角按钮遮挡；**Enter 发送、Ctrl/Cmd+Enter 换行**（中文输入法候选确认时 Enter 交给输入法）
     - **背景**：输入框背景 = **左侧导航栏背景色**（`bgSoftColor`）；好友/会话列表背景 = **原输入框背景色**（`bgHoverColor`），两层视觉互换（列表更亮、输入框更沉）
   - **在线状态（QQ 逻辑）**：在线/离线圆点**叠加在头像右下角**、覆盖头像一部分（`_avatarWithStatus`：Stack + Positioned，绿 `kSuccess`=在线 / 灰 `textFaintColor`=离线，圆点带 1.5px `bgColor` 描边"切"进头像）——应用于**聊天标题栏头像**（32px，原昵称旁独立圆点移除）、**会话列表项**（40px，online 从好友列表实时取）、**好友列表项**（40px）
+  - **绑定关系标记**（配对成功，数据源 `friends` 接口 `is_bind=1`）：昵称左侧显示**「绑定」胶囊标签**（`_buildBindTag`：`primarySoftColor` 底 + `kPrimary` 文字 10px/w600，圆角 4）——**会话列表项、聊天对象标题栏、好友列表项三处一致**。**会话列表绑定会话强制置顶**（先按是否绑定分组，组内再按最后消息时间倒序）；**绑定会话不可删除**（右键菜单不显示「删除会话」）
     - **右上角**（叠加在输入框顶层 `Stack`，`_InputResizeButton`）：**默认显示贴合右上角弧边的弧线符号**（`_CornerArcPainter` 两条短边 + 90° 圆弧，弧度与输入框圆角视觉一致，半透明弱化不抢焦点）；**鼠标悬停切换成放大/缩小图标**（`open_in_full` ↔ `close_fullscreen`，主色高亮），点击切换输入框高度 4 行 ↔ 10 行
     - **输入框下侧工具栏行**：**左侧**表情按钮（`Icons.emoji_emotions_outlined`，面板打开时高亮 `kPrimary`，点击向上弹 BubbleMenu 表情气泡）+ 图片按钮（`Icons.image_rounded`）；**右侧**发送按钮（`kPrimary` 圆角胶囊，纸飞机图标 + "发送" 文字）
     - **表情气泡交互**：点 **emoji** 插入字符或点**表情包**发送后，气泡**自动收起**（微信式，下次点表情按钮再弹出）；面板顶栏 tab 为**表情图标**（`emoji_emotions_outlined`）+ **爱心图标**（`favorite_outline`），选中主色高亮
@@ -417,6 +419,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - **标题栏**：与帖子详情页等**二级页面一致**（embedded：高 48、水平 8px、macOS 风格返回按钮 40x40/`kRadiusMd` 圆角/`arrow_back_ios_new_rounded` 16px、标题 15px/w600）；**标题 = 「昵称的主页」**；右上角省略号 `BubbleMenu` = 举报。
 - **内容**：用户信息卡（头像 56px 圆形 + 昵称 18px/w600 + UID）+ **关注按钮**（信息卡右侧）：
   - 未关注：`kPrimary` 蓝底白字「关注」；已关注：**胶囊**（`kRadiusFull`）+ **左侧导航栏背景色 `bgSoftColor`**「已关注」；互相关注：胶囊 + `bgSoftColor`「互相关注」
+  - **聊天按钮**：**仅互相关注时显示**在关注按钮左侧（`_buildChatButton`：`primarySoftColor` 底 + `kPrimary` 字、聊天气泡图标 15px + 「聊天」13px/w600），点击走 `HomePageState.openChatWithPeer(uid)` 切到消息 tab 并打开会话
   - 进入页面加载关注状态（`followStatus`），点击切换（`follow`），忙碌态转圈
   - + **动态/收藏双 tab**（胶囊切换，`primarySoft` 底选中 + `kPrimary` 字）。
   - 数据源：`GET /api/post/myPosts`、`/api/post/favorites` 带 `target_uid`。

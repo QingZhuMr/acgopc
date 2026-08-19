@@ -15,7 +15,7 @@ class PostDraft {
   bool get isEmpty => content.trim().isEmpty && imageNames.isEmpty;
 }
 
-/// 发动态草稿本地存储（config 目录下 draft/<uid> 子目录）
+/// 发动态草稿本地存储（config 目录下 `draft/<uid>` 子目录）
 ///
 /// 草稿在「暂存」时写入、发布成功后清除；退出登录不清除（属用户内容草稿）。
 /// **按账号隔离**：登录后 `openForUser(uid)` 设置账号目录，不同账号草稿互不可见。
