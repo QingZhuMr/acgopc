@@ -476,3 +476,84 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
   - 右键菜单样式：`BubbleMenu`（见 10.1 气泡菜单规范；内容对齐自动判断）
   - **刷新时机**：切到「历史」tab 首次加载；从其他 tab 切回个人中心时若历史 tab 未加载过则加载；清空/详情返回后即时刷新
 - **导航**：个人中心（`_currentIndex=1`）仍在左侧导航栏，页面标题「个人中心」
+
+---
+
+## 11. 移动端全页面 iOS 26 液态玻璃风格（2026-08-20 决策）
+
+> 仅移动端（Android/iOS）生效，桌面仍用左侧侧边栏（第 2.3 节）。**所有移动端页面内容均模仿 iOS 26 Liquid Glass 风格**（2026-08-20 决策，从「仅底部标签栏」扩展至全页面）。实现走 **B 方案（Flutter 层实现）**：一级浮层（底部标签栏 / 导航栏等）**优先 `liquid_glass_widgets` shader 真玻璃**（含折射 / 边缘光，见 11.6）、自绘 `BackdropFilter` 兜底（11.2），**不写原生壳**；Android / iOS 风格统一，不按系统分叉。
+>
+> **⚠ 2026-08-20 弃用 → 当日恢复 `liquid_glass_widgets`**：插件**重新启用**（按用户要求，完全照插件官方示例 `example/example.dart` 写法，只把 tab 入口换成我们自己的）。`GlassScaffold` + `GlassTabBar.bottom` 已在 `main.dart`（`LiquidGlassWidgets.initialize()` + `wrap()`）与 `home_page.dart` 落地。**注意**：`GlassScaffold` 底层为 `CupertinoPageScaffold`（非 Material 结构），页面 body 内 Text 需外层包透明 `Material` 提供 Material 祖先，否则渲染「黄色双下划线」伪影——此前「弃用」归因已修正为**「Material 上下文缺失」为主因**（而非 shader 异常），见 11.4。
+
+### 11.1 总体原则
+
+- **适用范围**：`lib/mobile/` 下全部页面——主框架、列表页、详情页、发布页、个人中心、设置、弹层、输入框、按钮、卡片。
+- **分级玻璃（性能第一）**：
+  - **一级浮层 = 真玻璃**：导航栏 / 底部标签栏 / 搜索栏 / 底部 sheet / 弹窗——优先 `liquid_glass_widgets` shader 玻璃（含折射 / 边缘光，见 11.6）；自绘兜底时用 `BackdropFilter` 高斯模糊（sigma 10~12）+ 半透明底 + 高光描边；
+  - **二级浮层 = 弱玻璃/半透明底**：卡片 / 分组列表 / 输入框 / 按钮底——模糊 sigma 4~6，或仅半透明底 + 细描边；**滚动列表项一律不套 `BackdropFilter`**（滚动中禁用真模糊，帧率会崩），用半透明底 + 页面背景色带过模拟；
+  - 每屏 `BackdropFilter` 实例 ≤ 3 个。
+- **不做**：实时景深折射、动态光照、触摸形变、真实 SF Symbols 字体、粒子氛围（Flutter 近似不了，避免四不像）；**不嵌入真 UIKit**（`UITabBar` / `UISearchBar` platform view，评估结论见 11.6）。
+
+### 11.2 玻璃材质规格（自绘兜底参数）
+
+> 玻璃材质**优先用 shader 方案**（`liquid_glass_widgets`，见 11.6）；本节为 `BackdropFilter` 自绘兜底参数，用于局部微调 / 组合 / 低端设备回退场景。
+
+- **高斯模糊**：`BackdropFilter(filters: [ImageFilter.blur(sigmaX: s, sigmaY: s)])`，一级 `s=10~12`、二级 `s=4~6`。
+- **半透明底色**：一级浅色 `Colors.white.withOpacity(0.6~0.8)` / 深色 `Colors.black.withOpacity(0.5~0.7)`；二级透明度提至 `0.8~0.92`（更接近实底，保证正文对比度 ≥4.5:1）。
+- **高光描边**：浮层顶部 / 四周 1px `Gradient` 细线（白→透明，模拟玻璃反光）；深色模式强度降为 40%；容器描边用 `kSurfaceBorder` 色 0.5px。
+- **阴影**：一级浮层轻微 `BoxShadow`（深色模式弱化或去除）。
+- 全部取色 / 透明度基于 `app_theme.dart` 常量 + `withOpacity`，禁硬编码。
+
+### 11.3 页面元素规格（iOS 26 化）
+
+| 元素 | 规格 |
+|---|---|
+| 页面背景 | 系统感渐变背景：浅色淡彩（白 → 极浅蓝灰）、深色深灰蓝（`bg` → 略冷深色），`LinearGradient` 实现，避免纯白 / 纯黑平铺 |
+| 导航栏 | 一级玻璃（11.2）；iOS 大标题（Large Title，28px / w700）首屏可见，滚动后收窄为常规页头；左滑返回默认开启 |
+| 列表 | **Inset grouped（内嵌分组）**：整组分圆角卡片（`kRadiusCard` + 半透明底）悬浮于背景上，组间距 20，组内无分割线（用间距分隔） |
+| 卡片 | 二级玻璃：`kRadiusCard`（18~20）+ 半透明底 + 顶部高光描边 + 无阴影 |
+| 按钮 | 胶囊化（`kRadiusFull`）：主操作 `kPrimary` 实底；次操作半透明玻璃底（`primarySoft` 或白 0.3~0.5）+ 细描边；图标按钮圆形玻璃底 |
+| 分段控件 | iOS SegmentedControl 式：整条胶囊半透明底，选中段玻璃浮起（白 ~0.6 底 + 轻阴影 + `kPrimary` 文字） |
+| 搜索栏 | 一级玻璃（11.2）；组件用 Flutter 官方 `CupertinoSearchTextField`（iOS 原生观感：放大镜图标 / 圆角胶囊 / 一键清空 / 键盘联动，纯 Dart，见 11.6），**不嵌原生 UISearchBar**；搜索按钮用 `CupertinoButton` 观感 |
+| 开关 / 滑杆 | 沿用 Material `Switch`（`activeColor` 主色）+ `Slider`（主色），形态已接近 iOS |
+| 底部弹层 | 半屏底部 sheet（顶部圆角 20、玻璃底、可下滑关闭 + 顶部指示条），替代居中对话框 |
+| 空态 / 加载 / 错误 | 沿用移动端 UI 规范 §9 三态，视觉套玻璃卡片 / 胶囊按钮 |
+
+### 11.4 底部标签栏（`GlassTabBar.bottom` shader 玻璃 + 滑动切换动画，2026-08-20 恢复插件）
+
+- **组件（2026-08-20 恢复 `GlassTabBar.bottom`）**：用 `liquid_glass_widgets` 的 `GlassTabBar.bottom`（shader 真液态玻璃 + Liquid Morph 动画），注入 `home_page.dart` 的 `GlassScaffold.bottomBar`。**完全照插件官方示例 `example/example.dart` 写法**：`GlassTab(icon: Icon(...), label: ...)` 直接传 `Icon` + label，不传额外颜色参数（走插件默认自适应），不做自绘角标 / 自绘 tab。原自绘 `MobileBottomNav`（`lib/mobile/widgets/mobile_bottom_nav.dart`）已删除。
+- **角标**：暂不叠加（插件无原生角标，官方示例亦无；后续需要时再议方案，不在 tab 上自绘）。
+- **黄色双下划线防护（关键）**：`GlassScaffold` 底层为 `CupertinoPageScaffold`（**无 Material 上下文**），故 body 外层**和 bottomBar（`GlassTabBar`）**都必须包 `Material(type: MaterialType.transparency)`（2026-08-20 实测：只包 body 时 tab 的 label 文本仍会渲染「黄色双下划线」伪影），否则内部 Text 渲染「黄色双下划线」伪影（CSDN/掘金经典问题：Text 需 Material/Scaffold 祖先）。**这也是当初「弃用」的根因——非 shader 异常，而是 Material 上下文缺失**。
+- **形态**：`GlassTabBar.bottom` 自带安全区适配 / 悬浮胶囊 / 选中态玻璃浮起；图标 24px + 文字 11~12px。
+- **渲染质量**：`quality: GlassQuality.premium`（高精渲染管线，圆角 / 边缘更平滑；2026-08-20 用户反馈圆角轻微锯齿后采用，导航栏为静态布局适用）。
+- **滑动选择（2026-08-20 定案）**：内容区用 **`PageView`**（横向滑动切换 tab，`BouncingScrollPhysics` iOS 回弹），**不再用 `IndexedStack`**；各 tab 页加 `AutomaticKeepAliveClientMixin`（`wantKeepAlive => true`）保状态、切回不重建。`selectedIndex` / `onTabSelected` 直接驱动 `PageView`，`PageView.onPageChanged` 同步回 `selectedIndex`。
+- **选中色**：`selectedIconColor` / `selectedLabelColor` = 主题蓝 `kPrimary`（0xFF0A84FF），未选中走插件默认（用户 2026-08-20 要求选中态图标 + 文字为主题蓝）。
+- **夜间模式（2026-08-20 接入）**：`GlassTabBar.bottom` 传 `adaptiveBrightness: true` + `brightnessOverride`（`ValueNotifier<Brightness>`，`home_page.dart` 内每帧 build 同步客户端通用判断 `Theme.of(context).brightness`，值未变不触发通知）。`brightnessOverride` 非空时插件 `GlassContentAwareBrightness` 绕过内容采样、直接跟随外部亮度源，夜间自动渲染深色玻璃 / 阴影（`darkAmount` 渐变动画），实现"夜间边框变黑"。
+
+### 11.5 实现约束
+
+- 移动端组件放 **`lib/mobile/`**（页面 → `mobile/pages/`、组件 → `mobile/widgets/`），桌面 `lib/pages/ widgets/` 不引用，桌面零影响（目录决策见 `docs/移动端适配方案.md` 2.2）。
+- 玻璃分级按 11.1 执行：一级浮层自绘玻璃（模糊 ≤ 每屏 3 个 `BackdropFilter`）、列表项不套模糊；沿用库官方「玻璃只用于导航 / 控制层」哲学。
+- **依赖（2026-08-20 恢复）**：`liquid_glass_widgets: ^0.30.1` 已启用（要求 Flutter ≥ 3.41 / Dart ≥ 3.5，本项目 3.47 / 3.13 满足）。`main.dart` 移动端入口：`await LiquidGlassWidgets.initialize()` + `LiquidGlassWidgets.wrap(child: ..., brightnessResolver: Theme.maybeBrightnessOf)`。注意 `wrap` 的 `child` 是命名参数；`home_page.dart` import 时 `hide GlassButton`（与本地 `glass_button.dart` 重名）。
+- 同一业务逻辑不双写，只进 `services/ core/`。
+- 主题明暗自适应取色统一走 `app_theme.dart`，禁止业务代码硬编码颜色 / 圆角。
+- 新增移动端页面视觉均须符合本章；评审自查清单见 `docs/移动端UI规范.md` 第 11 章。
+
+### 11.6 iOS「原生观感」实现方式评估（2026-08-20 决策，后更新）
+
+> **2026-08-20 恢复**：本节为 `liquid_glass_widgets` 引入时的完整评估记录。插件已恢复启用（11.4），搜索框仍用 `CupertinoSearchTextField`，仍不嵌真 UIKit。
+
+**结论（2026-08-20 更新）：底部标签栏引入三方库 `liquid_glass_widgets`（shader 真液态玻璃 + Liquid Morph 动画），搜索框用 Flutter 官方 `CupertinoSearchTextField`；仍不嵌入真 UIKit（platform view）。**
+
+- **关于三方库（用户明确「可以引入，不是硬标准」，2026-08-20 更新）**：放开「不引三方库」约束。首选 **`liquid_glass_widgets`**（^0.30.1，近期活跃：14 小时前发布、47.6k 下载）：
+  - 自定义 fragment shader 真玻璃（含折射 / 边缘光 / 色差），非 `BackdropFilter` 模拟；分 `premium / standard / minimal` 三档质量，Windows 开发可调 `standard`（轻量 2D shader，Frame 1 即渲染）；
+  - **Liquid Morph 动画引擎**：iOS 26 水滴形态变换 + 果冻物理过冲——即 11.4「滑动切换 + 指示条动画」的实现来源；
+  - 全平台支持（含 Windows 调试，不碰原生壳）、依赖仅 equatable / flutter_shaders / logging、官方支持 Reduce Motion / Reduce Transparency 无障碍；
+  - 要求 Flutter ≥ 3.41（本项目 3.44 满足）、入口需 `LiquidGlassWidgets.initialize()` + `wrap(brightnessResolver:)`（见 11.5）。
+- **仍不嵌真 UIKit（platform view 否决，理由不变）**：
+  1. 开发环境为 Windows，无法构建/调试 iOS 原生（需 macOS + Xcode），等于引入不可验证的原生代码；
+  2. 原生 `UITabBar` / `UISearchBar` 仅 iOS 有，Android 需保留自绘，双端分叉（违背 11.1「Android/iOS 统一」）；
+  3. 主框架导航 / 搜索框用 platform view：channel 双向同步、未读角标、push 页隐藏、键盘焦点等集成成本高、风险大。
+- **落地方式（汇总）**：底部标签栏 = `GlassTabBar.bottom`（11.4，已恢复）+ 内容区 `PageView` 滑动切换；搜索框 = `CupertinoSearchTextField`（放大镜 / 圆角胶囊 / 一键清空 / 键盘联动）；按钮 = `CupertinoButton` 观感；卡片 / 列表等二级玻璃用自绘兜底（11.2）。
+- **备选 / 回退**：`liquid_glass_ui_design`（组件多但维护滞后，不选）；若 shader 玻璃在低端设备掉帧，回退自绘方案（`BackdropFilter` + 指示条 lerp 插值，11.2），代码按 11.4 组件封装可整体替换。
+- **何时可启用真原生**：未来具备 macOS 构建环境、且明确要求「真原生液态玻璃」时，再单独立项评估 platform view 方案（如 `native_liquid_glass` 插件）；此前不引入任何 iOS 原生 UI 代码。

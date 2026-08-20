@@ -20,13 +20,16 @@
 // 字体：Segoe UI Variable + 中文回退微软雅黑，颜色统一取自 app_theme.dart。
 
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app/app.dart';
 import 'core/app_config.dart';
 import 'core/window_effect.dart';
+import 'mobile/mobile_app.dart';
 import 'services/app_service.dart';
 
 void main() async {
@@ -44,6 +47,55 @@ void main() async {
     }
     originalOnError?.call(details);
   };
+
+  // 手机预览模式：`--dart-define=MOBILE_PREVIEW=true`（见 docs/移动端适配方案.md §3.3）
+  // 用于在 Windows 桌面以手机尺寸窗口预览移动端 UI（无需 Android/iOS 模拟器）。
+  const bool mobilePreview = bool.fromEnvironment('MOBILE_PREVIEW');
+
+  // ==================== 移动端入口分流 ====================
+  // 真移动端（Android/iOS）直接进入移动端 UI，不初始化桌面窗口服务；
+  // 桌面平台 + MOBILE_PREVIEW=true 时，以手机尺寸窗口运行移动端 UI 做预览。
+  if (AppConfig.isMobile || mobilePreview) {
+    if (mobilePreview) {
+      // 预览模式（仅桌面有效）：手机尺寸窗口（iPhone 15 Pro 逻辑分辨率）
+      await windowManager.ensureInitialized();
+      const Size kPhoneSize = Size(390, 844);
+      const options = WindowOptions(
+        size: kPhoneSize,
+        center: true,
+        minimumSize: Size(320, 568),
+        title: '${AppConfig.appName}（手机预览）',
+        // 预览期保留系统标题栏，保证可拖动 / 可关闭
+        titleBarStyle: TitleBarStyle.normal,
+        backgroundColor: null,
+      );
+      windowManager.waitUntilReadyToShow(options, () async {
+        await windowManager.setMinimumSize(const Size(320, 568));
+        await windowManager.setSize(kPhoneSize);
+        await windowManager.center();
+        await windowManager.show();
+        await windowManager.focus();
+      });
+    }
+    // 移动端 iOS 26 液态玻璃引擎初始化（docs/UI规范.md §11.5 / docs/移动端UI规范.md §1.1）
+    // 仅移动端/预览入口初始化，桌面正式入口不引入移动端特殊能力。
+    // 【2026-08-20】liquid_glass_widgets 启用（照插件官方示例）。
+    // 注意：GlassScaffold 底层为 CupertinoPageScaffold（无 Material 上下文），
+    // 页面内部 Text 需在 body 外包透明 Material 防"黄色双下划线"伪影（见 home_page.dart）。
+    await LiquidGlassWidgets.initialize();
+    // 渲染诊断（Windows 预览/移动端）：确认 Impeller / shader filter 支持状态
+    // isShaderFilterSupported == true → 插件走完整 shader 管线（premium 生效，无锯齿）
+    debugPrint('═══ Renderer probe ═══');
+    debugPrint('isShaderFilterSupported = ${ui.ImageFilter.isShaderFilterSupported}');
+    debugPrint('═════════════════════════');
+    runApp(LiquidGlassWidgets.wrap(
+      child: const MobileApp(),
+      brightnessResolver: Theme.maybeBrightnessOf,
+    ));
+    return;
+  }
+
+  // ==================== 桌面正式入口 ====================
 
   // 初始化窗口管理器
   await windowManager.ensureInitialized();

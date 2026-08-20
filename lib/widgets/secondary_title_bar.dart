@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../core/app_theme.dart';
+import '../core/app_theme.dart';
 
 /// 二级页面嵌入式标题栏（内容区覆盖时使用，保留左侧导航栏）
 ///

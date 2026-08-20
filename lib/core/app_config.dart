@@ -67,6 +67,15 @@ abstract final class AppConfig {
   /// 默认头像兜底地址（相对 API 域名）
   static const String defaultAvatarPath = '/static/admin/img/default-avatar.png';
 
+  // ==================== 平台判断 ====================
+
+  /// 桌面平台（Windows / macOS / Linux）
+  static bool get isDesktop =>
+      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
+  /// 移动端平台（Android / iOS）
+  static bool get isMobile => !isDesktop;
+
   // ==================== 目录 / 文件 ====================
 
   /// 应用数据根目录：系统"文档"目录下的 appNameEn 子目录
