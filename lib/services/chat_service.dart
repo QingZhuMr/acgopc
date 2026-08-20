@@ -299,12 +299,18 @@ class ChatService {
   ///
   /// 多条消息到达时解密/入库耗时不同，若并发执行会导致**写入顺序颠倒**
   /// （消息显示按本地自增 id 排序）。这里用串行队列保证严格按接收顺序入库。
-  Future<void> _storeChain = Future.value();
+  Future<Map<String, dynamic>?> _storeChain = Future.value(null);
 
-  Future<void> onIncomingMessage(Map<String, dynamic> msg) {
+  /// 收到新消息（WS 推送 / 断线同步）：解密并本地存储。
+  ///
+  /// 返回解密后入库的消息 map（供聊天页增量 append 渲染，避免全量重载）；
+  /// 被丢弃（身份不符 / 本地已删除 / 自环）时返回 null。多条消息到达时
+  /// 解密/入库耗时不同，若并发执行会导致**写入顺序颠倒**，这里用串行队列
+  /// 保证严格按接收顺序入库。
+  Future<Map<String, dynamic>?> onIncomingMessage(Map<String, dynamic> msg) {
     final task = _storeChain.then((_) => _storeIncoming(msg));
     // 单条失败不打断后续队列
-    _storeChain = task.catchError((_) {});
+    _storeChain = task.catchError((_) => null);
     return task;
   }
 
@@ -353,8 +359,9 @@ class ChatService {
     _ready = false;
   }
 
-  /// 统一入库（WS 推送 / 断线同步共用）：解密并本地存储
-  Future<void> _storeIncoming(Map<String, dynamic> msg) async {
+  /// 统一入库（WS 推送 / 断线同步共用）：解密并本地存储。
+  /// 返回解密后的消息 map（供聊天页增量渲染）；被丢弃时返回 null。
+  Future<Map<String, dynamic>?> _storeIncoming(Map<String, dynamic> msg) async {
     final senderId = (msg['sender_id'] as num?)?.toInt() ?? 0;
     final receiverId = (msg['receiver_id'] as num?)?.toInt() ?? 0;
     final body = msg['body']?.toString() ?? '';
@@ -368,7 +375,9 @@ class ChatService {
     // 账号身份隔离：消息必须属于当前登录账号（sender 或 receiver 是 _userId），
     // 否则丢弃。防止切换账号后，上一个账号的 WS 队列/sync 残留任务把消息
     // 以新账号身份写入新库（会话列表串号）。
-    if (_userId <= 0 || (senderId != _userId && receiverId != _userId)) return;
+    if (_userId <= 0 || (senderId != _userId && receiverId != _userId)) {
+      return null;
+    }
 
     // chatId 优先使用服务器权威值（推送/sync 都携带），
     // 缺失时用双方 id 对称计算（与后端 chatId 规则一致）。
@@ -377,7 +386,7 @@ class ChatService {
         ? msg['chat_id']!.toString()
         : _chatId(senderId, receiverId);
     // 自环/空 chat_id 直接丢弃（杜绝脏数据产生）
-    if (chatId.isEmpty || _isSelfLoopChat(chatId)) return;
+    if (chatId.isEmpty || _isSelfLoopChat(chatId)) return null;
 
     // 解密（用本地私钥）
     String plaintext = '';
@@ -395,7 +404,7 @@ class ChatService {
     }
 
     // 本地已删除的消息：跳过（多选删除为仅本设备删除，防止"复活"）
-    if (await ChatStore.instance.isMsgDeleted(msgId)) return;
+    if (await ChatStore.instance.isMsgDeleted(msgId)) return null;
 
     // 对方是否已读（服务端按 chat_read 游标计算，离线/切号拉取也能恢复）
     final peerRead = (msg['peer_read'] as num?)?.toInt() ?? 0;
@@ -456,6 +465,26 @@ class ChatService {
       lastMsgTime: createTime,
       unreadDelta: senderId != _userId ? 1 : 0,
     );
+
+    // 返回解密后的消息 map，字段与移动端聊天页 _messages 一致，供增量渲染
+    return <String, dynamic>{
+      'msg_id': msgId,
+      'client_msg_id': clientMsgId.isEmpty ? 'in_$msgId' : clientMsgId,
+      'sender_id': senderId,
+      'receiver_id': receiverId,
+      'msg_type': msgType,
+      'seq': (msg['seq'] as num?)?.toInt() ?? 0,
+      'plaintext': plaintext,
+      'ciphertext': body,
+      'nonce': nonce,
+      'ephemeral_pub': ephem,
+      'signature': '',
+      'create_time': createTime,
+      'send_status': 1,
+      'read_status': peerRead,
+      'recalled': 0,
+      'image_local_path': '',
+    };
   }
 
   /// 拉取会话历史（服务器密文）→ 解密 → 本地存储

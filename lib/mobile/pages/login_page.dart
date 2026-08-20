@@ -151,7 +151,8 @@ class _LoginPageState extends State<LoginPage> {
         // 背景必须全屏：强制撑满视口，不能按内容高度收缩（否则底部露主题底色）
         width: double.infinity,
         height: double.infinity,
-        decoration: BoxDecoration(gradient: MobileTheme.background(b)),
+        // 移动端纯色主背景（夜间纯黑，与系统通知页一致）
+        color: MobileTheme.pageBackground(b),
         child: SafeArea(
           child: SilkySingleChildScrollView(
             scrollSpeed: 1.6,

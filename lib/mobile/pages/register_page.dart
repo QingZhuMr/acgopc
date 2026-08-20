@@ -11,10 +11,11 @@ import '../../core/app_theme.dart';
 import '../../core/device_service.dart';
 import '../../services/secure_storage.dart';
 import '../../utils/text_sanitize.dart';
-import '../../widgets/notify.dart';
 import '../theme/mobile_theme.dart';
 import '../widgets/glass_button.dart';
+import '../widgets/mobile_toast.dart';
 import '../widgets/mobile_form_pane.dart';
+import '../widgets/mobile_top_bar.dart';
 
 /// 注册成功回调（注册成功自动登录后携带用户信息进入主界面）
 typedef MobileRegisterSuccess = void Function(Map<String, dynamic> user);
@@ -171,7 +172,7 @@ class _RegisterPageState extends State<RegisterPage> {
         // 注册成功但自动登录失败（极少），提示用户手动登录
         if (!mounted) return;
         setState(() => _loading = false);
-        NotifyStack.success('注册成功，请手动登录', title: '注册成功');
+        MobileToast.success(context, '注册成功，请手动登录');
         Navigator.of(context).pop(); // 返回登录页
       }
     } catch (_) {
@@ -197,27 +198,15 @@ class _RegisterPageState extends State<RegisterPage> {
         // 背景必须全屏：强制撑满视口，不能按内容高度收缩（否则底部露主题底色）
         width: double.infinity,
         height: double.infinity,
-        decoration: BoxDecoration(gradient: MobileTheme.background(b)),
+        // 移动端纯色主背景（夜间纯黑，与系统通知页一致）
+        color: MobileTheme.pageBackground(b),
         child: SafeArea(
           child: Column(
             children: [
-              // ===== 顶部返回栏（移动端无自绘窗口控制） =====
-              SizedBox(
-                height: 44,
-                child: Row(
-                  children: [
-                    const SizedBox(width: 4),
-                    IconButton(
-                      icon: Icon(Icons.arrow_back_ios_new_rounded,
-                          size: 18, color: textColor(b)),
-                      onPressed: () => Navigator.of(context).maybePop(),
-                    ),
-                    const Spacer(),
-                    Text('注册', style: theme.textTheme.titleMedium),
-                    const Spacer(),
-                    const SizedBox(width: 48), // 平衡返回按钮宽度
-                  ],
-                ),
+              // ===== 顶部导航栏（通用组件 MobileTopBar，2026-08-20 定案） =====
+              MobileTopBar(
+                title: '注册',
+                onBack: () => Navigator.of(context).maybePop(),
               ),
               // ===== 注册主体 =====
               Expanded(

@@ -22,8 +22,19 @@ class MobileTheme {
   /// `GlassButton` 内部同样以该值兜底（见 `mobile/widgets/glass_button.dart`）。
   static const double formMaxWidth = 480;
 
-  /// 页面背景渐变（浅色白→极浅蓝灰 / 深色深灰蓝），
-  /// 移动端页面统一用该渐变做背景（§1.1 页面元素）。
+  /// 移动端页面主背景（iOS Liquid Glass 风格）：
+  /// 白天纯白 / 夜间**纯黑**（与桌面端夜间 `#23232A` 区分，2026-08-20）。
+  ///
+  /// 移动端所有页面（登录 / 注册 / 消息 / 广场 / 探索 / 我的 / 系统通知页）
+  /// 统一使用该纯色背景，禁止在移动端直接用 `bgColor(b)`（那是桌面主背景色）。
+  static Color pageBackground(Brightness b) =>
+      b == Brightness.dark ? const Color(0xFF000000) : Colors.white;
+
+  /// 【已弃用】页面背景渐变（浅色白→极浅蓝灰 / 深色深灰蓝）。
+  ///
+  /// 2026-08-20 起移动端页面（登录 / 注册 / 消息 / 广场 / 探索 / 我的）
+  /// 统一改用纯色主背景 `pageBackground(b)`（夜间纯黑），不再使用渐变。
+  /// 本方法保留仅供历史参考，新页面一律用 `pageBackground(b)` 纯色。
   static LinearGradient background(Brightness b) {
     if (b == Brightness.dark) {
       return const LinearGradient(
@@ -67,7 +78,7 @@ class MobileTheme {
   static ThemeData dark() => _build(Brightness.dark);
 
   static ThemeData _build(Brightness b) {
-    final bg = bgColor(b);
+    final bg = pageBackground(b);
     final text = textColor(b);
     final textBody = textBodyColor(b);
     final textMuted = textMutedColor(b);
@@ -108,7 +119,7 @@ class MobileTheme {
       ),
       // iOS 26 强约束：按钮统一走 GlassButton（CupertinoButton 观感），
       // 不再提供 Material FilledButton / OutlinedButton 主题，防止误用。
-      // 输入框：二级玻璃（半透明底 + 细描边）
+      // 输入框：二级玻璃（半透明底 + 细描边），大圆角与聊天页输入框一致（2026-08-21）
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: inputFill,
@@ -117,24 +128,24 @@ class MobileTheme {
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
-          borderRadius: kRadiusMdAll,
+          borderRadius: BorderRadius.circular(24),
           borderSide: BorderSide(color: borderColor),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: kRadiusMdAll,
+          borderRadius: BorderRadius.circular(24),
           borderSide: BorderSide(color: borderColor),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: kRadiusMdAll,
+          borderRadius: BorderRadius.circular(24),
           borderSide:
               BorderSide(color: kPrimary.withValues(alpha: 0.7), width: 1.4),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: kRadiusMdAll,
+          borderRadius: BorderRadius.circular(24),
           borderSide: const BorderSide(color: kDanger),
         ),
         focusedErrorBorder: OutlineInputBorder(
-          borderRadius: kRadiusMdAll,
+          borderRadius: BorderRadius.circular(24),
           borderSide: const BorderSide(color: kDanger, width: 1.4),
         ),
       ),

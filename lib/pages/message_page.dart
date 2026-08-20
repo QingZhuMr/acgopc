@@ -365,10 +365,10 @@ class MessagePageState extends State<MessagePage> {
   void _onMsgScroll() {
     if (!_msgScrollCtrl.hasClients) return;
     final pos = _msgScrollCtrl.position;
-    // 正向列表：offset 接近 maxScrollExtent = 底部（最新）
-    _stickBottom = pos.pixels >= pos.maxScrollExtent - 24;
-    // 滚到接近顶部（offset <= 40）→ 上滑加载更早历史
-    if (pos.pixels <= 40 && _selectedFriend != null) {
+    // 倒序列表：offset 接近 0 = 底部（最新）
+    _stickBottom = pos.pixels <= 24;
+    // 滚到接近顶部（offset 接近 maxScrollExtent）→ 上滑加载更早历史
+    if (pos.pixels >= pos.maxScrollExtent - 40 && _selectedFriend != null) {
       _loadOlderMessages();
     }
   }
@@ -382,9 +382,9 @@ class MessagePageState extends State<MessagePage> {
     final peerId = (friend['user_id'] as num?)?.toInt() ?? 0;
     final chatId =
         '${myUid < peerId ? myUid : peerId}_${myUid < peerId ? peerId : myUid}';
-    // 当前最旧一条（正向列表 _messages 为 ASC，最旧在头部）：
+    // 当前最旧一条（倒序列表 _messages 为 DESC，最旧在尾部）：
     // 本地自增 id 作为游标；msg_id（服务器 id）用于服务器游标
-    final oldest = _messages.first;
+    final oldest = _messages.last;
     final oldestLocalId = (oldest['id'] as num?)?.toInt() ?? 0;
     final oldestServerId = (oldest['msg_id'] as num?)?.toInt() ?? 0;
     // 记录原视口顶部消息（位置恢复兜底：插入后用 GlobalKey 定位回它）
@@ -421,9 +421,9 @@ class MessagePageState extends State<MessagePage> {
       });
       return;
     }
-    // 3) 增量插入列表头部（older 是 DESC，需反转为旧→新），并恢复可视位置
+    // 3) 增量插入列表尾部（older 为 DESC，更早历史），并恢复可视位置
     setState(() {
-      _messages = [...older.reversed, ..._messages];
+      _messages = [..._messages, ...older];
       _loadingOlder = false;
     });
     // 位置恢复兜底：优先定位到原第一条消息（GlobalKey），
@@ -610,8 +610,14 @@ class MessagePageState extends State<MessagePage> {
       final peerId = (msg['sender_id'] as num?)?.toInt() ?? 0;
       final selectedUid = (_selectedFriend?['user_id'] as num?)?.toInt() ?? 0;
       if (peerId == selectedUid) {
-        _loadLocalMessages();
-        _reportReadUpTo(msg);
+        // 仅在消息页活跃（正在查看该会话）时才刷新对话框 + 上报已读。
+        // 切走消息 tab 后 _selectedFriend 残留，若仍上报已读，后端会回推
+        // chat_read_sync → clearUnread 清零未读 → 左侧角标/会话红点消失
+        // （问题：切到其他页面收消息却无未读角标）。
+        if (widget.active) {
+          _loadLocalMessages();
+          _reportReadUpTo(msg);
+        }
       }
       _loadConversations();
     });
@@ -722,11 +728,12 @@ class MessagePageState extends State<MessagePage> {
     final myUid = widget.currentUserId;
     final peerId = (friend['user_id'] as num?)?.toInt() ?? 0;
     final chatId = '${myUid < peerId ? myUid : peerId}_${myUid < peerId ? peerId : myUid}';
-    // getMessages 返回 id DESC（最新在前）；正向列表需反转 → 最新在末尾（底部）
+    // getMessages 返回 id DESC（最新在前）；倒序列表（reverse:true）直接用 DESC，
+    // index 0 = 最新消息渲染在底部，打开会话天然定位到最新，无需滚动定位。
     final rows = await ChatStore.instance.getMessages(chatId, limit: 200);
     if (!mounted) return;
     setState(() {
-      _messages = rows.reversed.toList();
+      _messages = rows.toList();
     });
     // 清理已不在显示范围内消息的气泡 GlobalKey（防长期运行内存增长）
     final currentIds = {
@@ -739,29 +746,15 @@ class MessagePageState extends State<MessagePage> {
     }
   }
 
-  /// 回到消息列表底部（正向列表 offset = maxScrollExtent = 最新消息）
-  ///
-  /// ListView 惰性布局：首帧 maxScrollExtent 只反映已布局部分，比真实值小，
-  /// jumpTo 会停在列表中部（看起来"新消息在顶部"）。因此 jumpTo 后若
-  /// maxScrollExtent 仍在增长（内容继续被布局），延迟一帧再跳，直到收敛。
-  void _scrollToBottom([int attempt = 0]) {
+  /// 回到消息列表底部。倒序列表（reverse:true）下 offset 0 = 底部（最新消息），
+  /// 直接 jumpTo(0) 精确贴底，无需「收敛滚动」，彻底消除打开会话/收发消息时的
+  /// 二次定位跳动。
+  void _scrollToBottom() {
     _forceScrollBottom = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_msgScrollCtrl.hasClients) return;
-      final pos = _msgScrollCtrl.position;
-      final before = pos.maxScrollExtent;
-      pos.jumpTo(before);
+      _msgScrollCtrl.jumpTo(0);
       _stickBottom = true;
-      // 内容还在增长（布局未完成）→ 收敛继续跳
-      if (attempt < 8) {
-        Timer(const Duration(milliseconds: 16), () {
-          if (!mounted || !_msgScrollCtrl.hasClients) return;
-          final now = _msgScrollCtrl.position.maxScrollExtent;
-          if (now > before || before <= 0) {
-            _scrollToBottom(attempt + 1);
-          }
-        });
-      }
     });
   }
 
@@ -2853,63 +2846,60 @@ class MessagePageState extends State<MessagePage> {
         ),
       );
     }
-    // 时间分组：相邻消息间隔 >=5 分钟或跨天 → 插入时间标签（微信同款）
-    // 加载指示器统一在循环后 insert 到列表顶部（更早历史方向），避免重复添加
+    // 时间分组：相邻消息间隔 >=5 分钟或跨天 → 插入时间标签（微信同款）。
+    // 倒序列表（reverse:true）：_messages 为 DESC（index 0 = 最新，渲染在底部），
+    // 加载指示器加到列表末尾（视觉顶部 = 更早历史方向）。
     final children = <Widget>[];
-    DateTime? prevMsgTime;
-    // 气泡连续分组预计算：与「前一条」连续 → 不是组头；
-    // 与「后一条」连续 → 不是组尾。
+    // 气泡连续分组预计算（DESC 语义）：
+    // 与「视觉上方」那条（index+1，更早）连续 → 不是组头；
+    // 与「视觉下方」那条（index-1，更新）连续 → 不是组尾。
     final groupHeads = List<bool>.filled(_messages.length, true);
     final groupTails = List<bool>.filled(_messages.length, true);
-    // 时间标签强制断组：两条消息之间若会插入时间标签（间隔>=5分钟/跨天），
-    // 即使 _canGroupMessages 因时间字段异常判成连续，也强制断开并重出头像。
-    final timeBreak = List<bool>.filled(_messages.length, false); // i 与 i+1 之间断
-    for (var i = 0; i < _messages.length; i++) {
-      final t = (_messages[i]['create_time'] as num?)?.toInt() ?? 0;
-      if (t > 0) {
-        final dt = DateTime.fromMillisecondsSinceEpoch(t * 1000);
-        final label = _timeGroupLabel(dt, prevMsgTime);
-        if (label != null && prevMsgTime != null && i > 0) {
-          timeBreak[i - 1] = true; // 当前消息前插了时间标签 → i-1 与 i 之间断
-        }
-        prevMsgTime = dt;
-      }
+    // 时间标签强制断组：i 与 i+1 之间（视觉上 i 的下方是 i-1、上方是 i+1）
+    final timeBreak = List<bool>.filled(_messages.length, false);
+    // 1) 时间标签断组：i 与视觉上方 i+1（更早）间隔 >=5min/跨天 → timeBreak[i]
+    for (var i = 0; i < _messages.length - 1; i++) {
+      final ct = (_messages[i]['create_time'] as num?)?.toInt() ?? 0;
+      final nt = (_messages[i + 1]['create_time'] as num?)?.toInt() ?? 0;
+      if (ct <= 0 || nt <= 0) continue;
+      final cdt = DateTime.fromMillisecondsSinceEpoch(ct * 1000);
+      final ndt = DateTime.fromMillisecondsSinceEpoch(nt * 1000);
+      if (_timeGroupLabel(cdt, ndt) != null) timeBreak[i] = true;
     }
+    // 2) 分组：与上方（更早）同组 → 非组头；与下方（更新）同组 → 非组尾
     for (var i = 0; i < _messages.length; i++) {
-      if (i > 0 &&
-          !timeBreak[i - 1] &&
-          _canGroupMessages(_messages[i - 1], _messages[i])) {
-        groupHeads[i] = false; // 与前一条同组 → 不是组头
-      }
       if (i < _messages.length - 1 &&
           !timeBreak[i] &&
-          _canGroupMessages(_messages[i], _messages[i + 1])) {
-        groupTails[i] = false; // 与后一条同组 → 不是组尾
+          _canGroupMessages(_messages[i + 1], _messages[i])) {
+        groupHeads[i] = false; // 与上方（更早）同组 → 不是组头
+      }
+      if (i > 0 &&
+          !timeBreak[i - 1] &&
+          _canGroupMessages(_messages[i], _messages[i - 1])) {
+        groupTails[i] = false; // 与下方（更新）同组 → 不是组尾
       }
     }
+    // 3) 构建 children（DESC，children[0] = 最新，配合 reverse:true 渲染在底部）
     for (var i = 0; i < _messages.length; i++) {
       final m = _messages[i];
       final t = (m['create_time'] as num?)?.toInt() ?? 0;
-      if (t > 0) {
-        final dt = DateTime.fromMillisecondsSinceEpoch(t * 1000);
-        final label = _timeGroupLabel(dt, prevMsgTime);
-        if (label != null) {
-          children.add(Center(
-            child: Container(
-              margin: const EdgeInsets.symmetric(vertical: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: bgHoverColor(b).withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(kRadiusFull),
-              ),
-              child: Text(
-                label,
-                style: TextStyle(fontSize: 11, color: textMutedColor(b)),
-              ),
+      // 最新消息（i = 0，视觉最底部）不显示时间标签（微信/QQ 同款）；
+      // 最早一条（i = length-1，视觉最顶部）必显示；否则若与上方间隔大则显示
+      if (t > 0 && i > 0 && (i == _messages.length - 1 || timeBreak[i])) {
+        children.add(Center(
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: bgHoverColor(b).withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(kRadiusFull),
             ),
-          ));
-        }
-        prevMsgTime = dt;
+            child: Text(
+              _fmtGroupTime(DateTime.fromMillisecondsSinceEpoch(t * 1000)),
+              style: TextStyle(fontSize: 11, color: textMutedColor(b)),
+            ),
+          ),
+        ));
       }
       children.add(_buildMessageBubble(
         b,
@@ -2918,9 +2908,9 @@ class MessagePageState extends State<MessagePage> {
         groupTail: groupTails[i],
       ));
     }
-    // 加载指示放列表顶部（正向列表顶部 = 更早历史）
+    // 4) 加载指示器加到列表末尾（倒序列表末尾 = 视觉顶部 = 更早历史）
     if (_loadingOlder) {
-      children.insert(0, const Padding(
+      children.add(const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
         child: Center(
           child: SizedBox(
@@ -2931,14 +2921,14 @@ class MessagePageState extends State<MessagePage> {
         ),
       ));
     }
-    // 正向列表 + SilkyListView：与全站其他列表一致的 silky 平滑惯性滚动，
-    // 滚轮方向天然正确；打开会话由 _scrollToBottom 定位到底部（最新消息）
-    return SilkyListView(
+    // 倒序列表：reverse:true 让 index 0（最新）渲染在底部，打开会话天然定位到
+    // 最新消息，无需 _scrollToBottom 滚动定位（根治二次定位）。
+    // 用原生 ListView：SilkyScroll 包装层无 reverse 概念会反向操作 offset，
+    // 导致滚轮方向反；原生 ListView 的滚轮/触摸/惯性方向由 Flutter 正确计算。
+    return ListView(
       controller: _msgScrollCtrl,
+      reverse: true,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      scrollSpeed: 1.6,
-      silkyScrollDuration: const Duration(milliseconds: 600),
-      animationCurve: Curves.easeOutCubic,
       children: children,
     );
   }
@@ -3480,7 +3470,8 @@ class MessagePageState extends State<MessagePage> {
                     child: Center(
                       child: _previewNavButton(
                         icon: Icons.chevron_left_rounded,
-                        onTap: () => step(-1),
+                        // 倒序列表：更早图片在 index 更大处，左=上一张（更早）
+                        onTap: () => step(1),
                       ),
                     ),
                   ),
@@ -3493,7 +3484,8 @@ class MessagePageState extends State<MessagePage> {
                     child: Center(
                       child: _previewNavButton(
                         icon: Icons.chevron_right_rounded,
-                        onTap: () => step(1),
+                        // 倒序列表：更新的图片在 index 更小处，右=下一张（更新）
+                        onTap: () => step(-1),
                       ),
                     ),
                   ),

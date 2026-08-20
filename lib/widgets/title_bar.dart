@@ -3,10 +3,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../core/app_config.dart';
 import '../core/app_theme.dart';
 
 /// 内容区自绘顶栏
 ///
+/// - pad：无窗口概念，顶栏高度 0px（内容直接顶到屏幕顶部）
 /// - macOS：红黄绿安全区在左侧导航栏顶部，顶栏仅内容区拖拽区（无窗口按钮），高度 20 让内容尽量上移
 /// - Windows：内容区顶栏 35px，含拖拽区 + 窗口控制按钮
 class TitleBar extends StatelessWidget {
@@ -19,6 +21,8 @@ class TitleBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // pad：顶栏高度 0px，不渲染（无窗口、不可拖拽）
+    if (AppConfig.isPad) return const SizedBox.shrink();
     // macOS：红黄绿安全区在左侧导航栏顶部，顶栏仅内容区拖拽区（无窗口按钮），高度 20 让内容尽量上移
     if (Platform.isMacOS) {
       return Container(

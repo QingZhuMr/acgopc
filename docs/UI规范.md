@@ -9,7 +9,7 @@
 
 ## 0. 平台差异（顶部栏）
 
-macOS 与 Windows 双端，顶部栏存在差异（其余布局/颜色/圆角/组件通用）。
+macOS / Windows / pad（Android/iOS 平板）三端，顶部栏存在差异（其余布局/颜色/圆角/组件通用）。
 
 | 项 | macOS | Windows |
 |----|-------|---------|
@@ -22,9 +22,11 @@ macOS 与 Windows 双端，顶部栏存在差异（其余布局/颜色/圆角/�
 | 自绘窗口按钮 | 无（原生红黄绿承担） | 内容区顶栏右侧显示缩小/全屏/关闭 |
 | 实现 | `_TitleBar` + `_buildMacRail`（`Platform.isMacOS` 分支） | `_TitleBar` + `_buildMacRail`（共享） |
 
-> 顶栏与左侧导航栏互不影响：顶栏（拖拽区 + 窗口按钮）只渲染在右侧内容区顶部；左侧导航栏顶部独立渲染 logo（Windows）或红黄绿安全区（macOS），顶栏高度变化不会移动或缩放 logo。
+> 顶栏与左侧导航栏互不影响：顶栏（拖拽区 + 窗口按钮）只渲染在右侧内容区顶部；左侧导航栏顶部独立渲染 logo（Windows / pad）或红黄绿安全区（macOS），顶栏高度变化不会移动或缩放 logo。
 
-**macOS 专属逻辑一律用 `Platform.isMacOS` 分支隔离，Windows 不受影响。**
+**pad（Android/iOS 平板，2026-08-20 新增）**：无窗口概念，**顶栏高度 0px**——不渲染任何自绘顶栏（`TitleBar`、登录/注册/启动/发布/通知/详情页全屏顶栏均返回 `SizedBox.shrink()`），内容直接顶到屏幕顶部；`AppConfig.topBarGap` 归一化顶部间隙（pad 0 / Windows 5 / macOS 20）。左侧导航栏 logo 顶部留白收窄至 16px（pad 无顶栏，导航区更紧凑）。pad 判定 = 屏幕最短边 ≥ 600dp（Material 官方 tablet 断点），由 `main.dart` `DeviceGate` 启动分流：pad → `AcgoPcApp`（PC 界面）、手机 → `MobileApp`（锁定竖屏）；pad 支持横竖屏切换，手机不支持横屏。pad 上不初始化 `window_manager`/托盘/单实例等桌面服务。
+
+**macOS 专属逻辑一律用 `Platform.isMacOS` 分支隔离，Windows / pad 不受影响。**
 
 ### 0.1 通用规则：不遮盖左侧导航栏
 
@@ -61,7 +63,7 @@ macOS 与 Windows 双端，顶部栏存在差异（其余布局/颜色/圆角/�
 
 | 用途 | 白天 | 黑夜 | 语义 |
 |------|------|------|------|
-| `bg` 内容页背景 | `#FFFFFF` | `#23232A` | 主区块标准色 |
+| `bg` 内容页背景 | `#FFFFFF` | `#23232A` | 主区块标准色（夜间深灰蓝） |
 | `bgSoft` 侧边栏背景 | `#F5F7FA` | `#1E1E23` | 副区块标准色 |
 | `bgHover` 悬停/输入框 | `#EBEEF3` | `#2C2C2E` | 悬停、卡片、输入框底 |
 | `primarySoft` 选中浅蓝底 | `rgba(10,132,255,.10)` | `rgba(10,132,255,.22)` | 选中态 |
@@ -350,6 +352,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - **评论点赞对齐**（抖音式）：爱心图标统一 **16px**，用固定宽度容器（44px）左对齐——**点赞数字宽度不影响爱心位置**，同层级所有爱心图标中心在完全同一垂直列对齐
 - **点赞数格式化**：≥1000 用 `k`（如 `1k` / `1.2k` / `10k`），整数去小数、保留 1 位小数去末尾 0
 - **帖子级点赞/收藏乐观更新**（`_togglePostLike`/`_togglePostFavorite`）：点击后**先本地立即渲染**（切换高亮态 + 计数 ±1），**不等接口返回**；接口成功后用返回的最新 `is_liked/is_favorited/like_count/favorite_count` 校准；**失败回滚**（还原点击前状态与计数）+ `NotifyStack.warning` 提示「点赞/收藏失败，请稍后重试」
+- **评论/回复乐观提交（2026-08-20 新增）**：帖子详情页**纯文本**评论/回复提交后**立即本地插入并滚动定位到自己的回复处**（一级评论插列表最前、楼中楼插父评论 children 最前并全部展开；`_insertOptimisticComment`），**不整表刷新**；成功后仅用服务端返回的 `comment_id` 替换本地临时负 id（`_replaceOptimisticId`，同步迁移 `_commentKeys` 定位 key 保证后续定位/删除/点赞命中）；**失败则移除本地条目并回滚计数 + `NotifyStack.warning` 提示**。**带图评论仍走刷新**（图片需服务端返回 URL 才能渲染）。乐观条目昵称/头像取宿主传入的 `currentUserMap`（无则回退「我」+首字占位头像）。
 
 > **新增页面/组件时**：颜色一律用 `app_theme.dart` 的函数/常量 → 文字用对应层级（text/textBody/textMuted...）→ 卡片 `elevation:0` + 8px 圆角 → 图标用 Material Icons → 主题用 `Theme.of(context).brightness` 分流 → **禁硬编码颜色** → 可滚动区域用 silky_scroll → 时间用 `formatRelativeTime`。
 
@@ -372,7 +375,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
   - **好友**：原好友列表，点击进入会话（会话项自动出现）。
 - **聊天区**（第二期已实现）：未选中好友时右侧为 `Icons.chat_bubble_rounded` 64px 圆润气泡占位（颜色 `textFaintColor`——白天很浅/晚上很深，**无文字**）；选中好友后：
   - 聊天对象标题栏（头像 32px + 昵称 15px/w600，无分割线；对方未开启聊天时右侧提示"对方暂未开启聊天"）
-  - 消息区：气泡列表（自己 `kPrimary` 蓝底白字靠右、对方 `bgHoverColor` 底靠左带 32px 头像）；时间 + 发送状态（发送中 `schedule` 图标、失败 `error_outline` 红色）；空态"和好友打个招呼吧"
+  - 消息区：气泡列表（自己 `kPrimary` 蓝底白字靠右、对方 `bgHoverColor` 底靠左带 32px 头像）；时间 + 发送状态（发送中 `schedule` 图标、失败 `error_outline` 红色）；空态"和好友打个招呼吧"；**倒序列表 `reverse:true`**（index 0 = 最新渲染在底部，打开会话天然定位最新、无需滚动定位，2026-08-21 重构根治二次定位跳动；消息列表用**原生 `ListView`**——`SilkyScroll` 无 reverse 概念会反向操作 offset 导致滚轮方向反，2026-08-21 修复）
   - **输入区（微信/QQ 式）**：
     - **输入框行**：多行 TextField 占满整行（左侧无按钮留白），视觉高度 **4 行**（固定高度，实际满 4 行后**内部滚动**）；右侧留白 40px 避免被右上角按钮遮挡；**Enter 发送、Ctrl/Cmd+Enter 换行**（中文输入法候选确认时 Enter 交给输入法）
     - **背景**：输入框背景 = **左侧导航栏背景色**（`bgSoftColor`）；好友/会话列表背景 = **原输入框背景色**（`bgHoverColor`），两层视觉互换（列表更亮、输入框更沉）
@@ -398,7 +401,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
     - 输入区被多选工具栏替换：「已选 N 项」+ 全选/取消全选 + 删除（危险红，未选中禁用）+ 取消
     - 删除走 `AppDialog.confirm` 确认（danger 红键）→ **仅本设备删除**（服务器消息不受影响，其他设备仍可见）；删除后拉历史/断线同步按 msg_id 过滤已删消息，不会"复活"；被引用的消息若被删则自动取消引用
   - **离线消息通知**：收到对方新消息且**当前没在查看该会话**（消息页切走 / 看着其他会话 / 窗口遮挡或托盘）时，弹**应用内通知**（NotifyStack：昵称 + 内容摘要）+ **Windows 系统通知**（Toast：标题昵称 + 正文摘要），**点击跳转到对应会话**（切消息 tab + 打开会话）。离线期间断线 sync 拉取的消息同样通知（统一在解密入库时触发）；同一消息去重（只通知一次）；自己其他设备发出的消息不通知；会话昵称取本地会话缓存（找不到用「新消息」兜底）；图片/表情/引用消息摘要为 `[图片]`/`[表情]`/实际文本
-  - **已读状态跨端同步**：在本设备读消息 → 服务器除推 `chat_read` 给发送方外，还推 `chat_read_sync` 给自己其他在线设备 → 其他设备**清零该会话未读角标**（多端已读一致，A 端读了 B 端不再显示红点）
+  - **已读状态跨端同步**：在本设备读消息 → 服务器除推 `chat_read` 给发送方外，还推 `chat_read_sync` 给自己其他在线设备 → 其他设备**清零该会话未读角标**（多端已读一致，A 端读了 B 端不再显示红点）；**仅消息页活跃（`widget.active`）时才上报已读**——切走消息 tab 后 `_selectedFriend` 残留，若仍上报会经 `chat_read_sync` 回推清零本机未读角标（2026-08-21 修复「切其他页收消息无未读角标」）
   - **气泡连续（微信风格）**：同一发送者、相邻消息均**纯文本**（msg_type=1、未撤回、无引用块）、时间差 <5 分钟且同一天 → **合并成连续气泡**：组内成员之间不显示头像（**头像只在组头（最旧）那条显示**，自己消息右侧、对方消息左侧）、气泡圆角朝组内一侧变小贴合、垂直间距收紧到 1px；发送状态（已读/未读/失败）只在组尾显示
   - **头像磁盘缓存**：新增 `widgets/cached_avatar.dart`（`CachedAvatar`）——头像缓存到 `<dataDir>/avatar_cache/<url哈希>`，**好友不换头像时不重复网络加载**（磁盘命中 → `Image.file`，内存 ImageCache 二次加速）；换头像（url 变）→ 哈希变 → 自动重新下载；缓存超 7 天自动清理；`message_page`（`_avatarWithStatus`/`_peerAvatar`/`_myAvatar`）、`main.dart`（`_UserAvatar`）、`post_detail_page`（`_AvatarBox`）均已接入
 - **图片磁盘缓存**：`NetImage` 升级支持磁盘缓存（`services/image_cache.dart`）——帖子/评论图片首次加载后缓存到 `<dataDir>/image_cache/<uid>/`（**按用户隔离**），再次打开直接命中不再网络加载；**所有缓存一律用户隔离**（头像、聊天图片、帖子图片均按账号分目录），7 天自动清理；设置页「清除缓存」一键清理（含占用大小显示）
@@ -436,6 +439,7 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 - `BubbleMenuState` 公开 `close()`：点击面板内容（emoji/表情包）后由外部调用**自动收起气泡**（微信式）；触发按钮配 `GlobalKey<BubbleMenuState>` 绑定
 - **帖子详情页 emoji 面板**：表情按钮同样走 `BubbleMenu` 气泡（`content: EmojiPanel(transparent: true)`，宽 340 高 209，仅 emoji 无表情包），点击 emoji 插入后自动收起；移除旧 inline `AnimatedSize` 面板
 - **样式**：圆角矩形气泡（`kRadiusBtn`）+ **框外**小三角箭头（三角完全在矩形外、底边与矩形边缘相接，不侵入框内），带 1px 边框（白天浅灰 / 夜晚深灰，取 `bgHoverColor`）、**无阴影、无分割线**，主题明暗自适应（白天白底 / 夜晚深色底，取 `bgColor`）
+- **移动端微信风格**（`wechatStyle: true`，聊天气泡长按菜单）：**深色半透明面板**（`Color(0xF01C1C1E)`，白天夜晚一致）、**无小三角箭头**、固定宽 200 左对齐、项高 48、白字白图标（危险项 `kDanger`）、InkWell 按压水波纹（白 8%）、项间 0.5px 细分割线——桌面端默认样式（上方各条）不受影响
 - **文字不加粗**（`FontWeight.w400`）、**无下划线**（`decoration:none`）
 - **菜单项反馈**：**仅鼠标悬停**时整行显示**蓝色胶囊**（`kPrimary` 圆角底），图标与文字变**白色**；其余状态用项自身颜色（默认白天黑 / 夜晚白 `textColor`；删除项 `kDanger`）
 - **宽度**：`width` 参数不传时**按最长菜单项文字自动计算**（文字完整显示不截断，`TextPainter` 测量 + clamp 84~240）；传入数值则固定宽度（省略号菜单等场景）
@@ -479,11 +483,11 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 
 ---
 
-## 11. 移动端全页面 iOS 26 液态玻璃风格（2026-08-20 决策）
+## 11. 移动端全页面 iOS 26 玻璃风格（2026-08-20 决策）
 
-> 仅移动端（Android/iOS）生效，桌面仍用左侧侧边栏（第 2.3 节）。**所有移动端页面内容均模仿 iOS 26 Liquid Glass 风格**（2026-08-20 决策，从「仅底部标签栏」扩展至全页面）。实现走 **B 方案（Flutter 层实现）**：一级浮层（底部标签栏 / 导航栏等）**优先 `liquid_glass_widgets` shader 真玻璃**（含折射 / 边缘光，见 11.6）、自绘 `BackdropFilter` 兜底（11.2），**不写原生壳**；Android / iOS 风格统一，不按系统分叉。
+> 仅移动端（Android/iOS）生效，桌面仍用左侧侧边栏（第 2.3 节）。**所有移动端页面内容均模仿 iOS 26 Liquid Glass 风格**（2026-08-20 决策，从「仅底部标签栏」扩展至全页面）。实现走 **B 方案（Flutter 层实现）**：一级浮层（底部标签栏 / 导航栏等）用**自绘 `BackdropFilter` 高斯模糊玻璃**（11.2），**不写原生壳**；Android / iOS 风格统一，不按系统分叉。
 >
-> **⚠ 2026-08-20 弃用 → 当日恢复 `liquid_glass_widgets`**：插件**重新启用**（按用户要求，完全照插件官方示例 `example/example.dart` 写法，只把 tab 入口换成我们自己的）。`GlassScaffold` + `GlassTabBar.bottom` 已在 `main.dart`（`LiquidGlassWidgets.initialize()` + `wrap()`）与 `home_page.dart` 落地。**注意**：`GlassScaffold` 底层为 `CupertinoPageScaffold`（非 Material 结构），页面 body 内 Text 需外层包透明 `Material` 提供 Material 祖先，否则渲染「黄色双下划线」伪影——此前「弃用」归因已修正为**「Material 上下文缺失」为主因**（而非 shader 异常），见 11.4。
+> **⚠ 2026-08-20 终弃 `liquid_glass_widgets` 插件**：插件经历了「弃用 → 当日恢复 → 当日终弃」。最终**移除插件**（`pubspec.yaml` 依赖、`main.dart` 的 `initialize()/wrap()`、`GlassScaffold`/`GlassTabBar`/`GlassAppBar` 全部删除），底部导航栏改为**自绘高斯模糊玻璃**（`home_page.dart` 内 `_GlassBottomNav`，BackdropFilter blur 18 + 半透明主背景色底 + 0.8px 细边框 + **完全胶囊**（`kRadiusFull`，整体与选中胶囊圆角弧度一致），参考 PC 探索页 `_GlassBlock` 风格，见 11.4），顶部返回栏改为 PC 客户端同款按钮（`mobile/widgets/pc_style_back_button.dart`）。移动端页面背景夜间为**纯黑** `#000000`（`MobileTheme.pageBackground(b)`，与桌面 `#23232A` 区分）。
 
 ### 11.1 总体原则
 
@@ -519,31 +523,29 @@ animationCurve: Curves.easeOutCubic,     // 减速曲线
 | 底部弹层 | 半屏底部 sheet（顶部圆角 20、玻璃底、可下滑关闭 + 顶部指示条），替代居中对话框 |
 | 空态 / 加载 / 错误 | 沿用移动端 UI 规范 §9 三态，视觉套玻璃卡片 / 胶囊按钮 |
 
-### 11.4 底部标签栏（`GlassTabBar.bottom` shader 玻璃 + 滑动切换动画，2026-08-20 恢复插件）
+### 11.4 底部标签栏（自绘高斯模糊玻璃 + 切换动画，2026-08-20 终弃插件）
 
-- **组件（2026-08-20 恢复 `GlassTabBar.bottom`）**：用 `liquid_glass_widgets` 的 `GlassTabBar.bottom`（shader 真液态玻璃 + Liquid Morph 动画），注入 `home_page.dart` 的 `GlassScaffold.bottomBar`。**完全照插件官方示例 `example/example.dart` 写法**：`GlassTab(icon: Icon(...), label: ...)` 直接传 `Icon` + label，不传额外颜色参数（走插件默认自适应），不做自绘角标 / 自绘 tab。原自绘 `MobileBottomNav`（`lib/mobile/widgets/mobile_bottom_nav.dart`）已删除。
-- **角标**：暂不叠加（插件无原生角标，官方示例亦无；后续需要时再议方案，不在 tab 上自绘）。
-- **黄色双下划线防护（关键）**：`GlassScaffold` 底层为 `CupertinoPageScaffold`（**无 Material 上下文**），故 body 外层**和 bottomBar（`GlassTabBar`）**都必须包 `Material(type: MaterialType.transparency)`（2026-08-20 实测：只包 body 时 tab 的 label 文本仍会渲染「黄色双下划线」伪影），否则内部 Text 渲染「黄色双下划线」伪影（CSDN/掘金经典问题：Text 需 Material/Scaffold 祖先）。**这也是当初「弃用」的根因——非 shader 异常，而是 Material 上下文缺失**。
-- **形态**：`GlassTabBar.bottom` 自带安全区适配 / 悬浮胶囊 / 选中态玻璃浮起；图标 24px + 文字 11~12px。
-- **渲染质量**：`quality: GlassQuality.premium`（高精渲染管线，圆角 / 边缘更平滑；2026-08-20 用户反馈圆角轻微锯齿后采用，导航栏为静态布局适用）。
-- **滑动选择（2026-08-20 定案）**：内容区用 **`PageView`**（横向滑动切换 tab，`BouncingScrollPhysics` iOS 回弹），**不再用 `IndexedStack`**；各 tab 页加 `AutomaticKeepAliveClientMixin`（`wantKeepAlive => true`）保状态、切回不重建。`selectedIndex` / `onTabSelected` 直接驱动 `PageView`，`PageView.onPageChanged` 同步回 `selectedIndex`。
-- **选中色**：`selectedIconColor` / `selectedLabelColor` = 主题蓝 `kPrimary`（0xFF0A84FF），未选中走插件默认（用户 2026-08-20 要求选中态图标 + 文字为主题蓝）。
-- **夜间模式（2026-08-20 接入）**：`GlassTabBar.bottom` 传 `adaptiveBrightness: true` + `brightnessOverride`（`ValueNotifier<Brightness>`，`home_page.dart` 内每帧 build 同步客户端通用判断 `Theme.of(context).brightness`，值未变不触发通知）。`brightnessOverride` 非空时插件 `GlassContentAwareBrightness` 绕过内容采样、直接跟随外部亮度源，夜间自动渲染深色玻璃 / 阴影（`darkAmount` 渐变动画），实现"夜间边框变黑"。
+- **组件（2026-08-20 定案，自绘 `_GlassBottomNav`）**：`home_page.dart` 内 `_GlassBottomNav` + `_GlassNavItem`，**不再使用 `liquid_glass_widgets`**（依赖已从 `pubspec.yaml` 移除）。结构：`SafeArea` → 外层留白（`EdgeInsets.fromLTRB(12,0,12,10)`）→ `ClipRRect`(**完全胶囊 `kRadiusFull`**，整体与选中胶囊圆角弧度一致，iOS 设计理念) + `BackdropFilter`(高斯模糊 `blur(sigmaX:18, sigmaY:18)`) → 半透明底色 + `Border.all` 0.8px 细边框 + 高 64。**样式参考 PC 探索页 `_GlassBlock`**（高斯模糊 + 边框 + 圆角）。页面背景 = 移动端主背景色 `pageBackground(b)`（夜间**纯黑** `#000000`，与桌面 `#23232A` 区分，2026-08-20 决策）。
+  - **配色（跟随主题亮度 `b`）**：夜间底 `0xCC23232A`（主背景色高不透明度玻璃）+ 白 12% 边框；白天白 85% 玻璃底 + 黑 8% 边框。选中色统一 `kPrimary`（0xFF0A84FF）。
+  - **选中态动画（平滑变换，2026-08-20 修复 overshoot 越界后定稿）**：`AnimatedContainer` 背景胶囊浮起（`kPrimary` 透明底 10%~22%、`BorderRadius.circular(kRadiusFull)` 完全胶囊两侧大圆角、200ms `easeOutCubic`）+ 图标 `AnimatedScale`（选中 1.12、220ms `easeOutBack` 回弹放大——scale 无 [0,1] 约束，可安全 overshoot）+ `AnimatedSwitcher`（220ms，`switchInCurve`/`switchOutCurve` 用 `easeOutCubic`/`easeInCubic`；**严禁 `easeOutBack`**：overshoot >1 会直接传进 `FadeTransition` 的 opacity（须 [0,1]）触发 `parametric value is outside of [0,1] range` 断言刷屏；`transitionBuilder` = `FadeTransition` 淡入淡出 × `ScaleTransition` 0.6→1.0 `easeOutCubic` 缩放）实现 outline→filled 图标平滑变换 + 文字 `AnimatedDefaultTextStyle`（200ms `easeOutCubic`）颜色 / 字重（w500→w600）过渡。
+- **角标**：暂不叠加。
+- **滑动选择（2026-08-20 定案）**：内容区用 **`PageView`**（横向滑动切换 tab，`BouncingScrollPhysics` iOS 回弹）；各 tab 页加 `AutomaticKeepAliveClientMixin`（`wantKeepAlive => true`）保状态、切回不重建。`selectedIndex` / `onTabSelected` 直接驱动 `PageView`，`PageView.onPageChanged` 同步回 `selectedIndex`。
+- **形态**：图标 24px + 文字 11px；选中文字 w600、未选中 w500。
 
 ### 11.5 实现约束
 
 - 移动端组件放 **`lib/mobile/`**（页面 → `mobile/pages/`、组件 → `mobile/widgets/`），桌面 `lib/pages/ widgets/` 不引用，桌面零影响（目录决策见 `docs/移动端适配方案.md` 2.2）。
-- 玻璃分级按 11.1 执行：一级浮层自绘玻璃（模糊 ≤ 每屏 3 个 `BackdropFilter`）、列表项不套模糊；沿用库官方「玻璃只用于导航 / 控制层」哲学。
-- **依赖（2026-08-20 恢复）**：`liquid_glass_widgets: ^0.30.1` 已启用（要求 Flutter ≥ 3.41 / Dart ≥ 3.5，本项目 3.47 / 3.13 满足）。`main.dart` 移动端入口：`await LiquidGlassWidgets.initialize()` + `LiquidGlassWidgets.wrap(child: ..., brightnessResolver: Theme.maybeBrightnessOf)`。注意 `wrap` 的 `child` 是命名参数；`home_page.dart` import 时 `hide GlassButton`（与本地 `glass_button.dart` 重名）。
+- 玻璃分级按 11.1 执行：一级浮层自绘玻璃（模糊 ≤ 每屏 3 个 `BackdropFilter`）、列表项不套模糊；沿用「玻璃只用于导航 / 控制层」哲学。
+- **依赖（2026-08-20 终弃）**：`liquid_glass_widgets` 已**移除**，无插件依赖。`main.dart` 移动端入口直接 `runApp(const MobileApp())`，不再 `initialize()` / `wrap()`；`home_page.dart` 不再 `hide GlassButton`（无重名冲突）。
 - 同一业务逻辑不双写，只进 `services/ core/`。
 - 主题明暗自适应取色统一走 `app_theme.dart`，禁止业务代码硬编码颜色 / 圆角。
 - 新增移动端页面视觉均须符合本章；评审自查清单见 `docs/移动端UI规范.md` 第 11 章。
 
 ### 11.6 iOS「原生观感」实现方式评估（2026-08-20 决策，后更新）
 
-> **2026-08-20 恢复**：本节为 `liquid_glass_widgets` 引入时的完整评估记录。插件已恢复启用（11.4），搜索框仍用 `CupertinoSearchTextField`，仍不嵌真 UIKit。
+> **2026-08-20 终弃**：本节为 `liquid_glass_widgets` 引入与弃用的完整评估记录。插件最终被移除，底部导航栏用自绘 `BackdropFilter` 玻璃（11.4），搜索框仍用 `CupertinoSearchTextField`，仍不嵌真 UIKit。
 
-**结论（2026-08-20 更新）：底部标签栏引入三方库 `liquid_glass_widgets`（shader 真液态玻璃 + Liquid Morph 动画），搜索框用 Flutter 官方 `CupertinoSearchTextField`；仍不嵌入真 UIKit（platform view）。**
+**结论（2026-08-20 更新）：底部标签栏**自绘**高斯模糊玻璃（`BackdropFilter`，参考 PC 探索页 `_GlassBlock` 风格），不再引入三方库 `liquid_glass_widgets`；搜索框用 Flutter 官方 `CupertinoSearchTextField`；仍不嵌入真 UIKit（platform view）。**
 
 - **关于三方库（用户明确「可以引入，不是硬标准」，2026-08-20 更新）**：放开「不引三方库」约束。首选 **`liquid_glass_widgets`**（^0.30.1，近期活跃：14 小时前发布、47.6k 下载）：
   - 自定义 fragment shader 真玻璃（含折射 / 边缘光 / 色差），非 `BackdropFilter` 模拟；分 `premium / standard / minimal` 三档质量，Windows 开发可调 `standard`（轻量 2D shader，Frame 1 即渲染）；

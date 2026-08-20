@@ -20,10 +20,9 @@
 // 字体：Segoe UI Variable + 中文回退微软雅黑，颜色统一取自 app_theme.dart。
 
 import 'dart:io';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app/app.dart';
@@ -53,7 +52,8 @@ void main() async {
   const bool mobilePreview = bool.fromEnvironment('MOBILE_PREVIEW');
 
   // ==================== 移动端入口分流 ====================
-  // 真移动端（Android/iOS）直接进入移动端 UI，不初始化桌面窗口服务；
+  // 真移动端（Android/iOS）经 DeviceGate 判定：平板（pad）走 PC 界面、
+  // 手机走移动端 UI，均不初始化桌面窗口服务；
   // 桌面平台 + MOBILE_PREVIEW=true 时，以手机尺寸窗口运行移动端 UI 做预览。
   if (AppConfig.isMobile || mobilePreview) {
     if (mobilePreview) {
@@ -77,21 +77,15 @@ void main() async {
         await windowManager.focus();
       });
     }
-    // 移动端 iOS 26 液态玻璃引擎初始化（docs/UI规范.md §11.5 / docs/移动端UI规范.md §1.1）
-    // 仅移动端/预览入口初始化，桌面正式入口不引入移动端特殊能力。
-    // 【2026-08-20】liquid_glass_widgets 启用（照插件官方示例）。
-    // 注意：GlassScaffold 底层为 CupertinoPageScaffold（无 Material 上下文），
-    // 页面内部 Text 需在 body 外包透明 Material 防"黄色双下划线"伪影（见 home_page.dart）。
-    await LiquidGlassWidgets.initialize();
-    // 渲染诊断（Windows 预览/移动端）：确认 Impeller / shader filter 支持状态
-    // isShaderFilterSupported == true → 插件走完整 shader 管线（premium 生效，无锯齿）
-    debugPrint('═══ Renderer probe ═══');
-    debugPrint('isShaderFilterSupported = ${ui.ImageFilter.isShaderFilterSupported}');
-    debugPrint('═════════════════════════');
-    runApp(LiquidGlassWidgets.wrap(
-      child: const MobileApp(),
-      brightnessResolver: Theme.maybeBrightnessOf,
-    ));
+    if (AppConfig.isMobile) {
+      // 真移动端：先经 DeviceGate 判定平板/手机再分流
+      runApp(const DeviceGate());
+    } else {
+      // 桌面上的手机预览（MOBILE_PREVIEW=true）直接走移动端 UI
+      // 【2026-08-20】弃用 iOS 26 液态玻璃插件（liquid_glass_widgets），
+      // 底部导航栏改为自绘高斯模糊样式（见 home_page.dart）。
+      runApp(const MobileApp());
+    }
     return;
   }
 
@@ -137,4 +131,60 @@ void main() async {
   });
   // 立即启动 UI，确保窗口第一时间显示
   runApp(const AcgoPcApp());
+}
+
+/// 移动端启动分流网关（真机 Android/iOS 使用）：
+/// 首帧读取屏幕尺寸判定是否平板（pad），然后分流：
+///   - pad：走 PC 端界面（AcgoPcApp），支持横竖屏切换，顶栏高度 0px；
+///   - 手机：走移动端 UI（MobileApp），锁定竖屏。
+/// pad 判定标准：屏幕最短边 >= 600dp（Material 官方 tablet 断点），
+/// 无需原生代码，跨 Android/iOS 通用。
+class DeviceGate extends StatefulWidget {
+  const DeviceGate({super.key});
+
+  @override
+  State<DeviceGate> createState() => _DeviceGateState();
+}
+
+class _DeviceGateState extends State<DeviceGate> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _decide());
+  }
+
+  Future<void> _decide() async {
+    final size = MediaQuery.sizeOf(context);
+    final isPad = size.shortestSide >= 600;
+    AppConfig.isPad = isPad;
+    // 方向策略：pad 支持横竖屏切换；手机不支持横屏（锁定竖屏）
+    await SystemChrome.setPreferredOrientations(isPad
+        ? const [
+            DeviceOrientation.portraitUp,
+            DeviceOrientation.portraitDown,
+            DeviceOrientation.landscapeLeft,
+            DeviceOrientation.landscapeRight,
+          ]
+        : const [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+    // pad 无窗口顶栏：隐藏系统状态栏/导航栏，让 PC 布局全屏展示（可手势唤出）
+    if (isPad) {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    }
+    if (!mounted) return;
+    // pad → PC 界面（各顶栏按 AppConfig.isPad 分支返回高度 0）；
+    // 手机 → 移动端 UI。
+    runApp(isPad ? const AcgoPcApp() : const MobileApp());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 短暂空白引导页，判定完成即切换（肉眼几乎无感）
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Colors.white,
+        body: SizedBox.expand(),
+      ),
+    );
+  }
 }

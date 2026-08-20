@@ -1,9 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:silky_scroll/silky_scroll.dart';
 
 import '../core/api_client.dart';
+import '../core/app_config.dart';
 import '../core/app_theme.dart';
 import '../widgets/notify.dart';
 import '../widgets/secondary_title_bar.dart';
@@ -276,7 +275,7 @@ class _PrivacySettingsPageState extends State<PrivacySettingsPage> {
     return Padding(
       padding: EdgeInsets.fromLTRB(
         24,
-        Platform.isWindows ? 5 : 20,
+        AppConfig.topBarGap,
         24,
         4,
       ),

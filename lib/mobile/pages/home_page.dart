@@ -1,21 +1,22 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
-import 'package:liquid_glass_widgets/liquid_glass_widgets.dart'
-    hide GlassButton;
 
 import '../../core/app_theme.dart';
 import '../theme/mobile_theme.dart';
 import '../widgets/glass_button.dart';
+import 'message_page.dart';
 
 /// 登录后主界面（首页骨架）
 ///
 /// 规格（`docs/移动端UI规范.md` §4.3 / `docs/UI规范.md` §11）：
-///  - 完全照插件官方示例（example/example.dart）：`GlassScaffold` 渐变背景 +
-///    `GlassTabBar.bottom` 玻璃标签栏，`GlassTab(icon: Icon(...), label: ...)`
-///    直接传 Icon，不叠加自绘角标；
+///  - 底部导航栏为自绘玻璃样式（【2026-08-20】弃用 liquid_glass_widgets 插件）：
+///    高斯模糊（BackdropFilter）+ 半透明底色 + 细边框 + 圆角，参考 PC 探索页；
 ///  - 内容区 `PageView` 支持左右滑动切换，各 tab 用 `AutomaticKeepAliveClientMixin`
 ///    保持滚动位置 / 页面状态；
 ///  - 4 个入口：消息 / 广场 / 探索 / 我的，受控组件 `selectedIndex` / `onTabSelected`
 ///    与 `PageController` 联动；
+///  - 切换动画：选中项背景胶囊 + 图标/文字颜色过渡（AnimatedContainer）；
 ///  - 平板适配：每页内容列 `maxWidth` 限宽 + 居中（§4.5 强约束）。
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.user, required this.onLogout});
@@ -36,12 +37,6 @@ class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
   late final PageController _pageController;
 
-  /// 导航栏亮度源：跟随客户端全局白天/夜晚判断（`Theme.of(context).brightness`），
-  /// 作为插件 `GlassTabBar.bottom` 的 `brightnessOverride`，
-  /// 夜间自动渲染深色玻璃/阴影（`GlassContentAwareBrightness` 直接吃该 listenable）。
-  final ValueNotifier<Brightness> _navBrightness =
-      ValueNotifier<Brightness>(Brightness.light);
-
   @override
   void initState() {
     super.initState();
@@ -49,19 +44,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // 首次挂载前把亮度源同步成当前真实亮度（父组件回调先于子组件执行），
-    // 避免 GlassContentAwareBrightness 拿到默认 light 后，再被 build 里的
-    // 同步改成 dark 而触发一次 200ms cross-fade —— 表现为"导航栏加载一下才稳定"。
-    // 主题后续切换仍由 build 里的同步接管（值不变时 ValueNotifier 不通知）。
-    _navBrightness.value = Theme.of(context).brightness;
-  }
-
-  @override
   void dispose() {
     _pageController.dispose();
-    _navBrightness.dispose();
     super.dispose();
   }
 
@@ -83,55 +67,209 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
-    // 客户端通用白天/夜晚判断同步给导航栏亮度源（值未变时 ValueNotifier 不触发通知）
-    _navBrightness.value = b;
 
-    // 照插件官方示例（example/example.dart）的写法：
-    // GlassScaffold 渐变背景 + GlassTabBar.bottom 玻璃标签栏，
-    // GlassTab 直接传 Icon + label。
-    return GlassScaffold(
-      background: Container(
-        decoration: BoxDecoration(gradient: MobileTheme.background(b)),
+    // 自绘玻璃底部导航栏：高斯模糊 + 半透明底 + 细边框 + 圆角，
+    // 四个 tab 页（消息/广场/探索/我的）共用移动端主背景色（夜间纯黑）。
+    return Scaffold(
+      backgroundColor: MobileTheme.pageBackground(b),
+      extendBody: true,
+      body: PageView(
+        controller: _pageController,
+        physics: const BouncingScrollPhysics(),
+        onPageChanged: _onPageChanged,
+        children: [
+          _MessageTab(user: widget.user),
+          const _SquareTab(),
+          const _ExploreTab(),
+          _MineTab(user: widget.user, onLogout: widget.onLogout),
+        ],
       ),
-      body: Material(
-        type: MaterialType.transparency,
-        child: PageView(
-          controller: _pageController,
-          physics: const BouncingScrollPhysics(),
-          onPageChanged: _onPageChanged,
-          children: [
-            const _MessageTab(),
-            const _SquareTab(),
-            const _ExploreTab(),
-            _MineTab(user: widget.user, onLogout: widget.onLogout),
-          ],
-        ),
+      bottomNavigationBar: _GlassBottomNav(
+        currentIndex: _currentIndex,
+        onTabSelected: _onTabSelected,
       ),
-      // GlassScaffold 底层为 CupertinoPageScaffold（无 Material 祖先），
-      // bottomBar 里的 GlassTab label 文本同样需要 Material 祖先，
-      // 否则渲染"黄色双下划线"伪影 —— 故 bottomBar 也包一层透明 Material。
-      bottomBar: Material(
-        type: MaterialType.transparency,
-        child: GlassTabBar.bottom(
-          // 高精渲染管线：圆角/边缘更平滑（导航栏是静态布局，premium 档适用）
-          quality: GlassQuality.premium,
-          // 接入客户端通用白天/夜晚判断：夜间模式下玻璃渲染深色 + 阴影
-          adaptiveBrightness: true,
-          brightnessOverride: _navBrightness,
-          tabs: const [
-            GlassTab(icon: Icon(Icons.chat_bubble_outline_rounded), label: '消息'),
-            GlassTab(icon: Icon(Icons.grid_view_outlined), label: '广场'),
-            GlassTab(icon: Icon(Icons.explore_outlined), label: '探索'),
-            GlassTab(icon: Icon(Icons.person_outline_rounded), label: '我的'),
-          ],
-          selectedIndex: _currentIndex,
-          onTabSelected: _onTabSelected,
-          // 选中态：图标 + 文字用主题蓝 kPrimary（0xFF0A84FF）
-          selectedIconColor: kPrimary,
-          selectedLabelColor: kPrimary,
+    );
+  }
+}
+
+/// 自绘玻璃底部导航栏（参考 PC 探索页 `_GlassBlock` 风格）
+///
+/// 结构：SafeArea → 外层留白 → ClipRRect(圆角) + BackdropFilter(高斯模糊) +
+/// 半透明底色 + 细边框；选中项有背景胶囊浮起 + 图标/文字颜色过渡动画。
+class _GlassBottomNav extends StatelessWidget {
+  const _GlassBottomNav({required this.currentIndex, required this.onTabSelected});
+
+  final int currentIndex;
+  final ValueChanged<int> onTabSelected;
+
+  static const List<({IconData icon, String label})> _tabs = [
+    (icon: Icons.chat_bubble_outline_rounded, label: '消息'),
+    (icon: Icons.grid_view_outlined, label: '广场'),
+    (icon: Icons.explore_outlined, label: '探索'),
+    (icon: Icons.person_outline_rounded, label: '我的'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final b = Theme.of(context).brightness;
+    final borderColor =
+        b == Brightness.dark ? Colors.white : Colors.black;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+        child: ClipRRect(
+          // 整体与选中胶囊统一为完全胶囊（kRadiusFull），圆角弧度一致（iOS 理念）
+          borderRadius: BorderRadius.circular(kRadiusFull),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: Container(
+              height: 64,
+              decoration: BoxDecoration(
+                color: b == Brightness.dark
+                    ? const Color(0xCC23232A) // 夜间：主背景色高不透明度玻璃
+                    : Colors.white.withValues(alpha: 0.85),
+                border: Border.all(
+                  color: borderColor.withValues(alpha: b == Brightness.dark ? 0.12 : 0.08),
+                  width: 0.8,
+                ),
+                borderRadius: BorderRadius.circular(kRadiusFull),
+              ),
+              child: Row(
+                children: List.generate(_tabs.length, (i) {
+                  final tab = _tabs[i];
+                  final selected = i == currentIndex;
+                  return Expanded(
+                    child: _GlassNavItem(
+                      icon: tab.icon,
+                      label: tab.label,
+                      selected: selected,
+                      onTap: () => onTabSelected(i),
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ),
         ),
       ),
     );
+  }
+}
+
+/// 单个导航项：选中时背景胶囊浮起 + 图标/文字颜色 + 微放大过渡
+class _GlassNavItem extends StatelessWidget {
+  const _GlassNavItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final b = Theme.of(context).brightness;
+    final color = selected ? kPrimary : textMutedColor(b);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+        // 内容区固定 48 高（64 - 8×2），图标文字位置保持不动；
+        // 选中胶囊用 Stack+Positioned 上下各外扩 2px（总高 52），居中覆盖且不参与布局。
+        child: SizedBox(
+          height: 48,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Positioned(
+                top: -2,
+                bottom: -2,
+                left: 0,
+                right: 0,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? kPrimary.withValues(alpha: b == Brightness.dark ? 0.22 : 0.10)
+                        : Colors.transparent,
+                    // 完全胶囊：两侧大圆角
+                    borderRadius: BorderRadius.circular(kRadiusFull),
+                  ),
+                ),
+              ),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedScale(
+                    // 选中整体微放大（回弹只放外层：scale 无 [0,1] 约束，overshoot 安全）
+                    scale: selected ? 1.12 : 1.0,
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutBack,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      // 关键：switchIn 禁止 easeOutBack——它 overshoot 到 >1.0，
+                      // 会直接传进下方 FadeTransition 的 opacity 触发
+                      // "parametric value is outside of [0, 1] range" 断言刷屏。
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      // 图标平滑变换：淡入淡出 + 缩放（0.6→1.0，easeOutCubic 不越界）
+                      transitionBuilder: (child, anim) => FadeTransition(
+                        opacity: anim,
+                        child: ScaleTransition(
+                          scale: Tween<double>(begin: 0.6, end: 1.0).animate(
+                            CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
+                          ),
+                          child: child,
+                        ),
+                      ),
+                      child: Icon(
+                        selected ? _filledOf(icon) : icon,
+                        key: ValueKey(selected),
+                        size: 24,
+                        color: color,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: color,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    ),
+                    child: Text(label),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// outline 图标选中态切换到 filled 版本（体现选中状态变化）
+  static IconData _filledOf(IconData icon) {
+    switch (icon) {
+      case Icons.chat_bubble_outline_rounded:
+        return Icons.chat_bubble_rounded;
+      case Icons.grid_view_outlined:
+        return Icons.grid_view_rounded;
+      case Icons.explore_outlined:
+        return Icons.explore_rounded;
+      default:
+        return Icons.person_rounded;
+    }
   }
 }
 
@@ -228,31 +366,25 @@ class _TabEmpty extends StatelessWidget {
   }
 }
 
-/// 消息 tab（后续接会话 / 通知列表）
-class _MessageTab extends _TabPage {
-  const _MessageTab();
+/// 消息 tab（会话列表）
+class _MessageTab extends StatefulWidget {
+  const _MessageTab({required this.user});
+
+  final Map<String, dynamic> user;
 
   @override
   State<_MessageTab> createState() => _MessageTabState();
 }
 
-class _MessageTabState extends _TabPageState<_MessageTab> {
+class _MessageTabState extends State<_MessageTab>
+    with AutomaticKeepAliveClientMixin {
   @override
-  List<Widget> buildSlivers(BuildContext context, Brightness b) {
-    return const [
-      SliverPadding(
-        padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
-        sliver: SliverToBoxAdapter(
-          child: Text('消息',
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
-        ),
-      ),
-      _TabEmpty(
-        icon: Icons.forum_outlined,
-        title: '暂无消息',
-        subtitle: '评论、回复与系统通知会出现在这里',
-      ),
-    ];
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return MobileMessagePage(user: widget.user);
   }
 }
 

@@ -1,7 +1,6 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
+import '../core/app_config.dart';
 import '../core/app_theme.dart';
 
 /// 页面脚手架：标题 + 右侧按钮 + 内容区
@@ -24,12 +23,13 @@ class PageScaffold extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // 页面标题 + 右侧按钮
-        // 间距规范：Win 端标题距顶 5px（比 macOS 的 20 上移 15px）；
+        // 间距规范：pad 顶栏 0px（内容直接顶到屏幕顶部）；
+        // Win 端标题距顶 5px（比 macOS 的 20 上移 15px）；
         // 标题与下一行内容间距 20px（本行 bottom 4 + 内容区自带顶部 padding 16 = 20）；
         // Win 顶栏现为 40px，标题距窗口顶 = 40 + 5 = 45px
         Padding(
           padding: EdgeInsets.fromLTRB(
-              24, Platform.isWindows ? 5 : 20, 24, 4),
+              24, AppConfig.topBarGap, 24, 4),
           child: Row(
             children: [
               Expanded(

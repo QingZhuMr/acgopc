@@ -516,6 +516,8 @@ class _RegisterTitleBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // pad：无窗口顶栏，高度 0px（内容直接顶到屏幕顶部；系统返回键/手势可返回）
+    if (AppConfig.isPad) return const SizedBox.shrink();
     // macOS：最左侧预留红黄绿按钮安全距离，随后返回按钮 + 拖拽区（无窗口按钮）
     if (Platform.isMacOS) {
       return SizedBox(

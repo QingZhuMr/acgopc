@@ -264,6 +264,7 @@ class HomePageState extends State<HomePage> {
               postBrief: brief,
               postId: postId,
               currentUserId: currentUid,
+              currentUserMap: widget.user,
               embedded: true,
               onBack: () => setState(() => _macOverlay = null),
               onOpenUserProfile: openUserProfile,
@@ -286,6 +287,7 @@ class HomePageState extends State<HomePage> {
         postBrief: post,
         postId: id,
         currentUserId: currentUid,
+        currentUserMap: widget.user,
         embedded: true,
         onBack: () => setState(() => _macOverlay = null),
         onOpenUserProfile: openUserProfile,
@@ -353,6 +355,7 @@ class HomePageState extends State<HomePage> {
         postBrief: {'id': postId, 'content': postContent},
         postId: postId,
         currentUserId: currentUid,
+        currentUserMap: widget.user,
         embedded: true,
         focusCommentId: (commentId != null && commentId > 0) ? commentId : null,
         onBack: () => setState(() => _macOverlay = null),
@@ -377,11 +380,12 @@ class HomePageState extends State<HomePage> {
             ),
           )
         else
-          // Windows 应用 logo（保持原位置/尺寸，与右侧顶栏互不影响）
-          // 仅增大顶部留白让 logo 下移，底部留白固定，不推挤下方导航项
-          const Padding(
-            padding: EdgeInsets.fromLTRB(0, 32, 0, 12),
-            child: Image(
+          // Windows / pad 应用 logo（保持原位置/尺寸，与右侧顶栏互不影响）
+          // 仅增大顶部留白让 logo 下移，底部留白固定，不推挤下方导航项；
+          // pad 无顶栏（高度 0），logo 顶部留白收窄让导航区更紧凑
+          Padding(
+            padding: EdgeInsets.fromLTRB(0, AppConfig.isPad ? 16 : 32, 0, 12),
+            child: const Image(
               image: AssetImage(AppConfig.assetLogo),
               width: 40,
               height: 40,
@@ -479,8 +483,9 @@ class HomePageState extends State<HomePage> {
               children: [
                 // 自绘顶栏（macOS：红黄绿安全区 + 无窗口按钮；Windows：窗口按钮），仅占内容区
                 // 消息页（index 0）：macOS 不显示顶栏（消息页顶到窗口顶）；
-                // Windows 顶栏保留但背景用 bgSoftColor 与左侧导航栏一致
-                if (!Platform.isMacOS || _currentIndex != 0)
+                // Windows 顶栏保留但背景用 bgSoftColor 与左侧导航栏一致；
+                // pad：无窗口顶栏，高度 0px（内容直接顶到屏幕顶部）
+                if (!AppConfig.isPad && (!Platform.isMacOS || _currentIndex != 0))
                   TitleBar(
                     brightness: b,
                     // 消息页：bgSoftColor 与左侧导航栏一致；

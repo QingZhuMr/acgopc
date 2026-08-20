@@ -54,6 +54,9 @@ class PostDetailPage extends StatefulWidget {
   /// 以内容区覆盖方式打开、保留左侧导航栏；null 时降级为 Navigator 全屏）
   final void Function(int uid, String nickname, String avatar)? onOpenUserProfile;
 
+  /// 当前登录用户信息 map（乐观发布评论时构造本地条目用；null 时昵称回退"我"）
+  final Map<String, dynamic>? currentUserMap;
+
   const PostDetailPage({
     super.key,
     required this.postBrief,
@@ -64,6 +67,7 @@ class PostDetailPage extends StatefulWidget {
     this.focusCommentId,
     this.focusNewComment = false,
     this.onOpenUserProfile,
+    this.currentUserMap,
   });
 
   @override
@@ -524,6 +528,10 @@ class _PostDetailPageState extends State<PostDetailPage> {
   }
 
   /// 发送评论 / 回复（可带图片）
+  ///
+  /// 乐观处理：纯文本评论/回复提交后立即本地插入并滚动定位到自己的回复处，
+  /// 不整表刷新；成功后仅用真实 comment_id 替换本地临时 id，失败则移除本地
+  /// 条目并提示。带图评论保持刷新流程（图片需服务端返回 URL 才能渲染）。
   Future<void> _send() async {
     final content = _inputCtrl.text.trim();
     if (content.isEmpty && _pendingImages.isEmpty) {
@@ -532,11 +540,24 @@ class _PostDetailPageState extends State<PostDetailPage> {
     }
     if (_sending) return;
     setState(() => _sending = true);
+
+    final hasImage = _pendingImages.isNotEmpty;
+    final topTargetId = _replyTarget?.commentId ?? 0;
+    // 乐观临时 id（负值，不冲突）：仅纯文本走乐观流程
+    final optimisticId = hasImage ? 0 : -DateTime.now().millisecondsSinceEpoch;
+    if (optimisticId != 0) {
+      _insertOptimisticComment(optimisticId, content);
+      // 定位：楼中楼定位父评论块；一级评论定位新插入的临时条目
+      _pendingFocusCommentId = topTargetId > 0 ? topTargetId : optimisticId;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _tryFocusComment();
+      });
+    }
     try {
       final resp = await ApiClient.instance.postComment(
         postId: widget.postId,
         content: content,
-        parentId: _replyTarget?.commentId ?? 0,
+        parentId: topTargetId,
         replyToUid: _replyTarget?.replyToUid ?? 0,
         images: _pendingImages
             .map((p) => PostImage(p.bytes, p.filename))
@@ -544,21 +565,14 @@ class _PostDetailPageState extends State<PostDetailPage> {
       );
       final json = ApiClient.safeJsonDecode(resp.body);
       if (json['code'] != 0) {
+        if (optimisticId != 0) _removeOptimisticComment(optimisticId);
         if (mounted) {
           NotifyStack.warning(json['msg']?.toString() ?? '评论失败', title: '提示');
         }
         return;
       }
       if (!mounted) return;
-      // 记录待定位评论：楼中楼定位到父顶层评论；一级评论优先用返回的新评论 id，否则定位到第一条
-      final newCommentId = (json['data']?['comment_id'] as num?)?.toInt();
-      final topCommentId = _replyTarget?.commentId ?? 0;
-      if (topCommentId > 0) {
-        _pendingFocusCommentId = topCommentId; // 楼中楼：定位父评论块
-      } else if (newCommentId != null && newCommentId > 0) {
-        _pendingFocusCommentId = newCommentId; // 一级评论：定位新评论
-      }
-      // 清空输入，收起输入框，刷新评论列表
+      // 清空输入，收起输入框
       _inputCtrl.clear();
       setState(() {
         _replyTarget = null;
@@ -566,13 +580,142 @@ class _PostDetailPageState extends State<PostDetailPage> {
         _inputExpanded = false;
         _pendingImages.clear();
       });
-      NotifyStack.success('评论成功', title: '提示');
-      await _loadPost();
+      final newCommentId = (json['data']?['comment_id'] as num?)?.toInt();
+      if (optimisticId != 0) {
+        // 乐观成功：用真实 comment_id 替换临时 id（平滑过渡，不整表刷新）
+        if (newCommentId != null && newCommentId > 0) {
+          _replaceOptimisticId(optimisticId, newCommentId);
+        }
+      } else {
+        // 带图评论：仍刷新列表（图片 URL 需服务端返回后渲染），刷新后自动定位
+        final topCommentId = topTargetId > 0 ? topTargetId : newCommentId;
+        if (topCommentId != null && topCommentId > 0) {
+          _pendingFocusCommentId = topCommentId;
+        }
+        await _loadPost();
+      }
+      if (mounted) NotifyStack.success('评论成功', title: '提示');
     } catch (e) {
+      if (optimisticId != 0) _removeOptimisticComment(optimisticId);
       if (mounted) NotifyStack.warning('评论失败：$e', title: '提示');
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  // ==================== 乐观评论（提交即显示，失败回滚） ====================
+
+  /// 构造一级评论的乐观本地条目
+  Map<String, dynamic> _newOptimisticComment(int id, String content) {
+    final me = widget.currentUserMap;
+    final nickname = me?['nickname']?.toString();
+    return {
+      'id': id,
+      'user_id': widget.currentUserId,
+      'nickname': (nickname != null && nickname.isNotEmpty) ? nickname : '我',
+      'avatar': me?['avatar']?.toString() ?? '',
+      'content': content,
+      'create_time_text': '刚刚',
+      'location': '',
+      'images': <String>[],
+      'is_liked': false,
+      'like_count': 0,
+      'children': <Map<String, dynamic>>[],
+    };
+  }
+
+  /// 构造楼中楼回复的乐观本地条目
+  Map<String, dynamic> _newOptimisticReply(int id, String content) {
+    final me = widget.currentUserMap;
+    final nickname = me?['nickname']?.toString();
+    return {
+      'id': id,
+      'user_id': widget.currentUserId,
+      'nickname': (nickname != null && nickname.isNotEmpty) ? nickname : '我',
+      'avatar': me?['avatar']?.toString() ?? '',
+      'content': content,
+      'reply_to_uid': _replyTarget?.replyToUid ?? 0,
+      'reply_to_name': _replyTarget?.replyToName ?? '',
+      'create_time_text': '刚刚',
+      'location': '',
+      'images': <String>[],
+      'is_liked': false,
+      'like_count': 0,
+    };
+  }
+
+  /// 乐观插入评论/回复（不发起请求，先本地显示并保持滚动位置）
+  void _insertOptimisticComment(int id, String content) {
+    final topTargetId = _replyTarget?.commentId ?? 0;
+    setState(() {
+      if (topTargetId > 0) {
+        // 楼中楼：插到父顶层评论 children 最前（时间最新优先展示）
+        for (final c in _comments) {
+          if (c['id'] == topTargetId) {
+            final children = c['children'] as List<dynamic>?;
+            if (children == null || children.isEmpty) {
+              c['children'] = <Map<String, dynamic>>[_newOptimisticReply(id, content)];
+            } else {
+              children.insert(0, _newOptimisticReply(id, content));
+            }
+            break;
+          }
+        }
+        _childShowCount[topTargetId] = 1 << 30; // 展开全部确保新回复可见
+      } else {
+        // 一级评论：插到最前（评论区按时间倒序，新评论在顶部）
+        _comments.insert(0, _newOptimisticComment(id, content));
+        _topTotal += 1;
+        _commentTotal += 1;
+      }
+    });
+  }
+
+  /// 乐观评论成功后：用真实 comment_id 替换本地临时 id（保持平滑，不整表刷新）
+  void _replaceOptimisticId(int oldId, int newId) {
+    if (oldId == newId) return;
+    var found = false;
+    for (final c in _comments) {
+      if (c['id'] == oldId) {
+        c['id'] = newId;
+        found = true;
+        break;
+      }
+      final children = c['children'] as List<dynamic>? ?? const [];
+      for (final child in children) {
+        final m = child as Map<String, dynamic>;
+        if (m['id'] == oldId) {
+          m['id'] = newId;
+          found = true;
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (!found) return;
+    // 迁移定位 key：使后续按新 id 定位/删除/点赞仍能命中同一渲染节点
+    final key = _commentKeys.remove(oldId);
+    if (key != null) _commentKeys[newId] = key;
+    if (mounted) setState(() {});
+  }
+
+  /// 乐观评论失败：从本地列表移除该条目并回滚计数
+  void _removeOptimisticComment(int id) {
+    final wasTop = _comments.any((c) => c['id'] == id);
+    _comments.removeWhere((c) => c['id'] == id);
+    for (final c in _comments) {
+      final children = c['children'] as List<dynamic>?;
+      if (children != null) {
+        children.removeWhere((child) => (child as Map<String, dynamic>)['id'] == id);
+      }
+    }
+    if (wasTop) {
+      _topTotal = _topTotal > 0 ? _topTotal - 1 : 0;
+      _commentTotal = _commentTotal > 0 ? _commentTotal - 1 : 0;
+    }
+    _commentKeys.remove(id);
+    _childShowCount.remove(id);
+    if (mounted) setState(() {});
   }
 
   /// 选择评论图片（最多 1 张，重新选择覆盖之前的）
@@ -656,6 +799,8 @@ class _PostDetailPageState extends State<PostDetailPage> {
         child: Icon(Icons.arrow_back, size: 18, color: textMutedColor(b)),
       ),
     );
+    // pad：无窗口顶栏，高度 0px（内容直接顶到屏幕顶部；系统返回键/手势可返回）
+    if (AppConfig.isPad) return const SizedBox.shrink();
     if (Platform.isMacOS) {
       return SizedBox(
         height: 40,

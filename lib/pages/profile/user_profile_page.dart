@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:silky_scroll/silky_scroll.dart';
 
@@ -366,7 +364,7 @@ class _UserProfilePageState extends State<UserProfilePage> {
     }
     // 全屏模式（理论不触发，他人主页默认 embedded）
     return Padding(
-      padding: EdgeInsets.fromLTRB(24, Platform.isWindows ? 5 : 20, 24, 4),
+      padding: EdgeInsets.fromLTRB(24, AppConfig.topBarGap, 24, 4),
       child: Row(
         children: [
           SizedBox(

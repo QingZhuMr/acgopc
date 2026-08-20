@@ -94,6 +94,17 @@ class BubbleMenu extends StatefulWidget {
   /// true=鼠标右键触发（桌面端右键菜单），false=点击触发（默认）
   final bool triggerOnRightClick;
 
+  /// true=长按触发（移动端聊天气泡等），优先级高于其它触发方式
+  final bool triggerOnLongPress;
+
+  /// true=微信风格（移动端聊天长按菜单）：深色半透明圆角面板、
+  /// 无小三角箭头、白字白图标、整行点击高亮、菜单项间细分割线
+  final bool wechatStyle;
+
+  /// true=优先在按压点/锚点上方弹出（移动端长按菜单，微信习惯在上方）；
+  /// 上方空间不足时自动回落下方。默认 false=优先下方（PC 端行为不变）。
+  final bool preferUp;
+
   /// 打开/关闭状态回调（触发按钮图标高亮等 UI 联动）
   final ValueChanged<bool>? onOpenChange;
 
@@ -111,6 +122,9 @@ class BubbleMenu extends StatefulWidget {
     this.gap = 6,
     this.duration = const Duration(milliseconds: 150),
     this.triggerOnRightClick = false,
+    this.triggerOnLongPress = false,
+    this.wechatStyle = false,
+    this.preferUp = false,
     this.onOpenChange,
   });
 
@@ -169,6 +183,8 @@ class BubbleMenuState extends State<BubbleMenu> {
           gap: widget.gap,
           duration: widget.duration,
           triggerPosition: _triggerPos,
+          wechatStyle: widget.wechatStyle,
+          preferUp: widget.preferUp,
           onClosed: _onClosed,
         ),
       );
@@ -196,6 +212,15 @@ class BubbleMenuState extends State<BubbleMenu> {
 
   @override
   Widget build(BuildContext context) {
+    // 长按触发（移动端聊天气泡等）：用 GestureDetector 长按，菜单跟随按压位置
+    if (widget.triggerOnLongPress) {
+      return GestureDetector(
+        key: _anchorKey,
+        behavior: HitTestBehavior.translucent,
+        onLongPressStart: (details) => _openMenu(details.globalPosition),
+        child: widget.child,
+      );
+    }
     // 直接用 Listener 监听 PointerDownEvent，绕过 GestureRecognizer arena：
     // - triggerOnRightClick：仅响应右键（左键穿透给 child 的 InkWell）
     // - 默认：仅响应左键
@@ -288,6 +313,8 @@ class _BubbleMenuOverlayView extends StatelessWidget {
   final double gap;
   final Duration duration;
   final Offset? triggerPosition;
+  final bool wechatStyle;
+  final bool preferUp;
   final VoidCallback onClosed;
 
   const _BubbleMenuOverlayView({
@@ -303,6 +330,8 @@ class _BubbleMenuOverlayView extends StatelessWidget {
     required this.gap,
     required this.duration,
     required this.triggerPosition,
+    required this.wechatStyle,
+    required this.preferUp,
     required this.onClosed,
   });
 
@@ -324,17 +353,20 @@ class _BubbleMenuOverlayView extends StatelessWidget {
           anchorBox.size.height,
         );
 
+        // 微信风格：无小三角箭头（占位归零），菜单固定宽度（更接近微信长按菜单）
+        final effArrowSize = wechatStyle ? 0.0 : arrowSize;
         // 面板内容：使用固定 panelHeight；菜单项：按项数计算
         final contentHeight = content != null
             ? panelHeight
             : items.length * itemHeight + verticalPadding * 2;
         // 总高度 = 内容 + 框外小三角占位
-        final bubbleHeight = contentHeight + arrowSize;
+        final bubbleHeight = contentHeight + effArrowSize;
         // 宽度：固定值则用固定值；null 按最长菜单项文字自动计算（完整显示不截断）
         final bubbleWidth =
-            width ?? _measureMenuWidth(items);
+            width ?? (wechatStyle ? 200.0 : _measureMenuWidth(items));
         // 内容对齐：所有菜单项内容宽度一致 → 居中；不一致 → 左对齐
-        final alignCenter = _menuItemsAlignCenter(items);
+        // 微信风格：统一左对齐
+        final alignCenter = wechatStyle ? false : _menuItemsAlignCenter(items);
 
         // 参考点：有指针坐标（右键/左键位置）则跟随鼠标，否则对齐 anchor
         final ref = triggerPosition;
@@ -342,8 +374,11 @@ class _BubbleMenuOverlayView extends StatelessWidget {
         final spaceBelow =
             ref != null ? overlaySize.height - ref.dy : overlaySize.height - anchorRect.bottom;
         final spaceAbove = ref != null ? ref.dy : anchorRect.top;
-        final showDown =
-            spaceBelow >= bubbleHeight + gap || spaceBelow >= spaceAbove;
+        // preferUp：优先向上（移动端长按菜单，微信习惯在按压点上方），
+        // 上方空间不足才回落下方；默认优先向下（PC 端行为不变）。
+        final showDown = preferUp
+            ? !(spaceAbove >= bubbleHeight + gap)
+            : (spaceBelow >= bubbleHeight + gap || spaceBelow >= spaceAbove);
 
         final double topRaw;
         if (ref != null) {
@@ -368,7 +403,7 @@ class _BubbleMenuOverlayView extends StatelessWidget {
         if (left < minLeft) left = minLeft;
 
         final arrowCenterDx =
-            (targetX - left).clamp(arrowSize, bubbleWidth - arrowSize);
+            (targetX - left).clamp(effArrowSize, bubbleWidth - effArrowSize);
 
         final bubbleKey = GlobalKey<_AnimatedBubbleState>();
         return Stack(
@@ -394,10 +429,11 @@ class _BubbleMenuOverlayView extends StatelessWidget {
                 width: bubbleWidth,
                 height: bubbleHeight,
                 contentHeight: contentHeight,
-                arrowSize: arrowSize,
+                arrowSize: effArrowSize,
                 radius: radius,
                 arrowCenterDx: arrowCenterDx,
                 arrowPointUp: showDown,
+                wechatStyle: wechatStyle,
                 items: items,
                 content: content,
                 itemHeight: itemHeight,
@@ -423,6 +459,7 @@ class _AnimatedBubble extends StatefulWidget {
   final double radius;
   final double arrowCenterDx; // 箭头水平中心相对气泡 left 的偏移
   final bool arrowPointUp; // true=三角在顶部（气泡在 anchor 下方）
+  final bool wechatStyle; // true=微信风格（深色半透明面板、无三角、白字）
   final List<BubbleMenuItem> items;
 
   /// 自定义面板内容（非空时替代菜单项渲染）
@@ -442,6 +479,7 @@ class _AnimatedBubble extends StatefulWidget {
     required this.radius,
     required this.arrowCenterDx,
     required this.arrowPointUp,
+    required this.wechatStyle,
     required this.items,
     required this.content,
     required this.itemHeight,
@@ -509,11 +547,12 @@ class _AnimatedBubbleState extends State<_AnimatedBubble>
               contentHeight: widget.contentHeight,
               arrowCenterDx: widget.arrowCenterDx,
               arrowPointUp: widget.arrowPointUp,
+              wechatStyle: widget.wechatStyle,
             ),
             // 内容避开三角区域：三角在顶部时下方留顶距，三角在底部时下方留底距
             child: Padding(
               padding: EdgeInsets.fromLTRB(
-                0,
+                widget.wechatStyle ? 0 : 0,
                 (widget.arrowPointUp ? widget.arrowSize : 0) +
                     widget.verticalPadding,
                 0,
@@ -528,20 +567,28 @@ class _AnimatedBubbleState extends State<_AnimatedBubble>
                       type: MaterialType.transparency,
                       child: widget.content!,
                     )
-                  : Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (var i = 0; i < widget.items.length; i++)
-                          _MenuItemTile(
-                            item: widget.items[i],
-                            height: widget.itemHeight,
-                            alignCenter: widget.alignCenter,
-                            onTap: () {
-                              widget.items[i].onTap?.call();
-                              beginClose();
-                            },
-                          ),
-                      ],
+                  // 微信风格：ClipRRect 按面板圆角裁剪，使菜单项按压水波纹不溢出圆角
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(
+                        widget.wechatStyle ? widget.radius : 0,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (var i = 0; i < widget.items.length; i++)
+                            _MenuItemTile(
+                              item: widget.items[i],
+                              height: widget.itemHeight,
+                              alignCenter: widget.alignCenter,
+                              wechatStyle: widget.wechatStyle,
+                              isLast: i == widget.items.length - 1,
+                              onTap: () {
+                                widget.items[i].onTap?.call();
+                                beginClose();
+                              },
+                            ),
+                        ],
+                      ),
                     ),
             ),
           ),
@@ -560,6 +607,7 @@ class _BubblePainter extends CustomPainter {
   final double contentHeight; // 矩形本体高度
   final double arrowCenterDx;
   final bool arrowPointUp; // true=三角在顶部（矩形本体在三角下方）
+  final bool wechatStyle; // true=微信风格：深色半透明面板、无小三角、边框更淡
 
   _BubblePainter({
     required this.brightness,
@@ -568,14 +616,21 @@ class _BubblePainter extends CustomPainter {
     required this.contentHeight,
     required this.arrowCenterDx,
     required this.arrowPointUp,
+    required this.wechatStyle,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final fill = Paint()..color = bgColor(brightness);
-    // 边框：白天浅灰 / 夜晚深灰
+    // 微信风格：始终深色半透明底（白天夜晚一致），参考微信长按菜单弹层
+    final fill = Paint()
+      ..color = wechatStyle
+          ? const Color(0xF01C1C1E)
+          : bgColor(brightness);
+    // 边框：微信风格更淡（白 10%）；默认白天浅灰 / 夜晚深灰
     final border = Paint()
-      ..color = bgHoverColor(brightness)
+      ..color = wechatStyle
+          ? const Color(0x1AFFFFFF)
+          : bgHoverColor(brightness)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
 
@@ -632,23 +687,33 @@ class _BubblePainter extends CustomPainter {
         old.arrowSize != arrowSize ||
         old.contentHeight != contentHeight ||
         old.brightness != brightness ||
-        old.radius != radius;
+        old.radius != radius ||
+        old.wechatStyle != wechatStyle;
   }
 }
 
-/// 单个菜单项（可点击）：无背景胶囊、无加粗；仅鼠标悬停时文字/图标变蓝，其余默认白天黑/夜晚白
+/// 单个菜单项（可点击）：无背景胶囊、无加粗；仅鼠标悬停时文字/图标变蓝，其余默认白天黑/夜晚白。
+/// 微信风格：白字白图标、整行高亮、项间细分割线（参考微信长按菜单）。
 class _MenuItemTile extends StatefulWidget {
   final BubbleMenuItem item;
   final double height;
 
   /// true=所有菜单项内容宽度一致，居中显示；false=宽窄不一，左对齐
   final bool alignCenter;
+
+  /// true=微信风格：白字白图标、整行 hover 高亮、分割线
+  final bool wechatStyle;
+
+  /// true=最后一项（无底部分割线）
+  final bool isLast;
   final VoidCallback onTap;
 
   const _MenuItemTile({
     required this.item,
     required this.height,
     required this.alignCenter,
+    required this.wechatStyle,
+    required this.isLast,
     required this.onTap,
   });
 
@@ -662,6 +727,62 @@ class _MenuItemTileState extends State<_MenuItemTile> {
   @override
   Widget build(BuildContext context) {
     final b = Theme.of(context).brightness;
+
+    // ============ 微信风格：深色面板上白字白图标、按压水波纹、项间分割线 ============
+    if (widget.wechatStyle) {
+      final color = widget.item.color ?? Colors.white;
+      return Material(
+        type: MaterialType.transparency,
+        // 按压水波纹（白 8%）——微信长按菜单的点击反馈
+        child: InkWell(
+          onTap: widget.onTap,
+          splashColor: const Color(0x14FFFFFF),
+          highlightColor: const Color(0x14FFFFFF),
+          child: Container(
+            height: widget.height,
+            // 整行内边距（微信菜单项左右留白较大）
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            // 底部细分割线（最后一项无）
+            decoration: BoxDecoration(
+              border: widget.isLast
+                  ? null
+                  : const Border(
+                      bottom: BorderSide(
+                        color: Color(0x14FFFFFF),
+                        width: 0.5,
+                      ),
+                    ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                if (widget.item.icon != null) ...[
+                  Icon(widget.item.icon, size: 17, color: color),
+                  const SizedBox(width: 10),
+                ],
+                if (widget.item.label != null)
+                  Flexible(
+                    child: Text(
+                      widget.item.label!,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: color,
+                        fontWeight: FontWeight.w400,
+                        decoration: TextDecoration.none,
+                        decorationColor: Colors.transparent,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ============ 默认风格（PC 气泡菜单） ============
     // hover：蓝底胶囊 + 图标文字变白；其余用项自身颜色（默认白天黑 / 夜晚白），不加粗
     final bg = _hovered ? kPrimary : Colors.transparent;
     final color =

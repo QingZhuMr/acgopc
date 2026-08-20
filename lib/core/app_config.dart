@@ -22,7 +22,7 @@ abstract final class AppConfig {
   static const String appNameEn = 'Yeahbear';
 
   /// 应用版本
-  static const String appVersion = '0.1.4';
+  static const String appVersion = '0.1.5';
 
   /// 通用 Logo 网络地址（登录页/关于页展示；留空则回退 assetLogo）
   static const String appLogoUrl = '';
@@ -75,6 +75,15 @@ abstract final class AppConfig {
 
   /// 移动端平台（Android / iOS）
   static bool get isMobile => !isDesktop;
+
+  /// 是否为平板（pad）。由入口 `DeviceGate` 启动判定后写入：
+  /// 屏幕最短边 >= 600dp（Material 官方 tablet 断点）视为平板。
+  /// pad 走 PC 端界面布局（AcgoPcApp），顶栏高度 0px，支持横竖屏切换。
+  static bool isPad = false;
+
+  /// 内容区顶部与自绘顶栏的间隙：
+  /// pad 顶栏高度 0px；Windows 顶栏下 5px；macOS/其他 20px。
+  static double get topBarGap => isPad ? 0 : (Platform.isWindows ? 5 : 20);
 
   // ==================== 目录 / 文件 ====================
 

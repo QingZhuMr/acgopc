@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../core/app_config.dart';
 import '../core/app_theme.dart';
 
 /// 启动页（加载动画）：打开软件时先显示，期间判断自动/手动登录，
@@ -34,6 +35,8 @@ class SplashPage extends StatelessWidget {
 
   /// 自绘顶栏：macOS 预留红黄绿按钮安全距离、不绘制窗口按钮；Windows 绘制窗口按钮
   Widget _buildTitleBar(Brightness b) {
+    // pad：无窗口顶栏，高度 0px（内容直接顶到屏幕顶部）
+    if (AppConfig.isPad) return const SizedBox.shrink();
     // macOS：左侧预留红黄绿按钮安全距离，右侧仅拖拽（无窗口按钮）
     if (Platform.isMacOS) {
       return SizedBox(

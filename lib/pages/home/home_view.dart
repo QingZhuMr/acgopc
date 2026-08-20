@@ -280,6 +280,7 @@ class HomeViewState extends State<HomeView>
           postBrief: post,
           postId: id,
           currentUserId: currentUid,
+          currentUserMap: widget.user,
         ),
       ),
     );

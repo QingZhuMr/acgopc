@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import '../core/api_client.dart';
 import '../core/app_config.dart';
 import '../core/app_theme.dart';
+import '../services/notification_store.dart';
 import '../widgets/bubble_menu.dart';
 import '../widgets/notify.dart';
 import 'post_detail_page.dart';
@@ -73,12 +74,29 @@ class _NotificationPageState extends State<NotificationPage> {
   }
 
   Future<void> _loadFirst() async {
-    setState(() {
-      _loading = true;
-      _page = 1;
-      _notifications.clear();
-      _allLoaded = false;
-    });
+    // 1) 先读本地缓存秒出（上次拉取的列表 + 未读数）
+    final cached = await NotificationStore.instance.loadCached();
+    if (cached != null && mounted) {
+      setState(() {
+        _notifications
+          ..clear()
+          ..addAll(cached.items);
+        _unread = cached.unread;
+        _loading = false;
+        _page = 1;
+        _allLoaded = false;
+      });
+    } else {
+      if (mounted) {
+        setState(() {
+          _loading = true;
+          _page = 1;
+          _notifications.clear();
+          _allLoaded = false;
+        });
+      }
+    }
+    // 2) 网络拉取最新，成功后覆盖列表 + 落缓存
     try {
       final resp = await ApiClient.instance
           .getNotificationList(page: 1, pageSize: 20)
@@ -91,19 +109,26 @@ class _NotificationPageState extends State<NotificationPage> {
             .toList();
         if (mounted) {
           setState(() {
-            _notifications.addAll(list);
+            _notifications
+              ..clear()
+              ..addAll(list);
             _unread = (data['unread_count'] as num?)?.toInt() ?? 0;
             _allLoaded = list.length < 20;
             _loading = false;
           });
         }
+        // 覆盖缓存（后台写入，不影响 UI）
+        unawaited(NotificationStore.instance
+            .saveFirstPage(list, _unread)
+            .catchError((_) {}));
       } else {
-        if (mounted) setState(() => _loading = false);
-        _toast(json['msg'] as String? ?? '加载失败');
+        // 有缓存时静默失败（保留缓存内容），无缓存才提示
+        if (mounted && cached == null) setState(() => _loading = false);
+        if (cached == null) _toast(json['msg'] as String? ?? '加载失败');
       }
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
-      _toast('网络异常，请重试');
+      if (mounted && cached == null) setState(() => _loading = false);
+      if (cached == null) _toast('网络异常，请重试');
     }
   }
 
@@ -128,6 +153,9 @@ class _NotificationPageState extends State<NotificationPage> {
             _allLoaded = list.length < 20;
           });
         }
+        // 追加缓存
+        unawaited(
+            NotificationStore.instance.appendPage(list).catchError((_) {}));
       } else {
         _allLoaded = true;
       }
@@ -165,6 +193,8 @@ class _NotificationPageState extends State<NotificationPage> {
     final ids = _idList(n);
     if (ids.isEmpty) return;
     await _deleteIds(ids);
+    // 同步删除缓存
+    unawaited(NotificationStore.instance.deleteByIds(ids).catchError((_) {}));
     if (mounted) {
       final isRead = (n['is_read'] as num?)?.toInt() ?? 0;
       setState(() {
@@ -183,6 +213,8 @@ class _NotificationPageState extends State<NotificationPage> {
     if (ids.isEmpty) return;
     final idSet = ids.toSet();
     await _deleteIds(ids);
+    // 同步删除缓存
+    unawaited(NotificationStore.instance.deleteByIds(ids).catchError((_) {}));
     if (mounted) {
       setState(() {
         _notifications.removeWhere(
@@ -214,6 +246,8 @@ class _NotificationPageState extends State<NotificationPage> {
           .readAllNotifications()
           .timeout(const Duration(seconds: 8));
     } catch (_) {}
+    // 同步缓存：全部置已读 + 未读数清零
+    unawaited(NotificationStore.instance.markAllRead().catchError((_) {}));
     if (mounted) {
       setState(() {
         for (final n in _notifications) {
@@ -239,6 +273,10 @@ class _NotificationPageState extends State<NotificationPage> {
               .timeout(const Duration(seconds: 8));
         }
       } catch (_) {}
+      // 同步缓存：聚合内所有 id 均标已读
+      for (final id in ids) {
+        unawaited(NotificationStore.instance.markRead(id).catchError((_) {}));
+      }
       if (mounted) {
         setState(() {
           n['is_read'] = 1;
@@ -315,13 +353,13 @@ class _NotificationPageState extends State<NotificationPage> {
   }
 
   /// 简洁标题行（侧边栏 tab 内嵌用）：无返回按钮/窗口按钮，保留标题 + 未读角标 + 全部已读
-  /// 间距规范：Win 端标题距顶 5px（比 macOS 的 20 上移 15px）；
+  /// 间距规范：pad 顶栏 0px；Win 端标题距顶 5px（比 macOS 的 20 上移 15px）；
   /// 标题与下一行内容间距 20px（本行 bottom 4 + 内容区自带顶部 padding 16 = 20）；
   /// 左右边距 24px，与 _PageScaffold（我的/设置页）标题行一致
   Widget _buildEmbeddedBar(Brightness b) {
     return Padding(
       padding: EdgeInsets.fromLTRB(
-          24, Platform.isWindows ? 5 : 20, 24, 4),
+          24, AppConfig.topBarGap, 24, 4),
       child: Row(
         children: [
           Text(
@@ -451,6 +489,8 @@ class _NotificationPageState extends State<NotificationPage> {
             icon: const Icon(Icons.done_all_rounded, size: 16),
             label: const Text('全部已读', style: TextStyle(fontSize: 13)),
           );
+    // pad：无窗口顶栏，高度 0px（内容直接顶到屏幕顶部；系统返回键/手势可返回）
+    if (AppConfig.isPad) return const SizedBox.shrink();
     // macOS：预留红黄绿按钮安全距离，去掉窗口控制按钮，保留功能按钮 + 拖拽区
     if (Platform.isMacOS) {
       return SizedBox(

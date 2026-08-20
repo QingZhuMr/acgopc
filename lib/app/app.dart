@@ -16,6 +16,7 @@ import '../pages/splash_page.dart';
 import '../services/chat_notifier.dart';
 import '../services/chat_service.dart';
 import '../services/chat_store.dart';
+import '../services/notification_store.dart';
 import '../services/notification_center.dart';
 import '../services/post_draft_store.dart';
 import '../services/secure_storage.dart';
@@ -176,6 +177,8 @@ class AcgoPcAppState extends State<AcgoPcApp> {
       unawaited(ChatStore.instance.pruneForeignData(uid));
       // 发帖草稿按账号隔离（draft/<uid>/）
       PostDraftStore.instance.openForUser(uid);
+      // 通知缓存按账号隔离（acgo_notification_<uid>.db）
+      NotificationStore.instance.openForUser(uid);
       // 尽早初始化聊天服务（设置 _userId，WS 消息到达前即正确计算会话归属）
       // 防止实时消息在 init 前到达导致 chatId 计算错误/入库失败
       unawaited(() async {
@@ -252,6 +255,7 @@ class AcgoPcAppState extends State<AcgoPcApp> {
           postBrief: {'id': postId, 'content': postContent},
           postId: postId,
           currentUserId: uid,
+          currentUserMap: _user,
         ),
       ),
     );
@@ -300,6 +304,8 @@ class AcgoPcAppState extends State<AcgoPcApp> {
     ChatStore.instance.closeForUser();
     // 发帖草稿目录重置（下次登录按新账号切回）
     PostDraftStore.instance.openForUser(0);
+    // 关闭通知缓存库连接（下次登录按新账号重新打开）
+    NotificationStore.instance.closeForUser();
     // 按需清除：仅清登录态（device_key），保留记住的密码与设备标识
     DeviceService.instance.clearDeviceKey();
     setState(() => _user = null);
@@ -346,6 +352,8 @@ class AcgoPcAppState extends State<AcgoPcApp> {
     ChatStore.instance.closeForUser();
     // 发帖草稿目录重置（下次登录按新账号切回）
     PostDraftStore.instance.openForUser(0);
+    // 关闭通知缓存库连接（下次登录按新账号重新打开）
+    NotificationStore.instance.closeForUser();
     DeviceService.instance.clearDeviceKey();
     if (mounted) setState(() => _user = null);
   }

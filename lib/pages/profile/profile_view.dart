@@ -684,6 +684,7 @@ class ProfileViewState extends State<ProfileView> {
           postBrief: p,
           postId: id,
           currentUserId: (_user['id'] as num?)?.toInt() ?? 0,
+          currentUserMap: _user,
         ),
       ),
     );
@@ -978,6 +979,7 @@ class ProfileViewState extends State<ProfileView> {
           postBrief: p,
           postId: id,
           currentUserId: (_user['id'] as num?)?.toInt() ?? 0,
+          currentUserMap: _user,
         ),
       ),
     );
@@ -1036,6 +1038,7 @@ class ProfileViewState extends State<ProfileView> {
           postBrief: p,
           postId: id,
           currentUserId: (_user['id'] as num?)?.toInt() ?? 0,
+          currentUserMap: _user,
         ),
       ),
     );

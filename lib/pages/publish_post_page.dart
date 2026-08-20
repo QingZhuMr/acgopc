@@ -235,6 +235,7 @@ class _PublishPostPageState extends State<PublishPostPage> {
                 postBrief: brief,
                 postId: postId,
                 currentUserId: curUid,
+                currentUserMap: widget.user,
               ),
             ),
           );
@@ -325,6 +326,8 @@ class _PublishPostPageState extends State<PublishPostPage> {
             size: 18, color: textMutedColor(b)),
       ),
     );
+    // pad：无窗口顶栏，高度 0px（内容直接顶到屏幕顶部；系统返回键/手势可返回）
+    if (AppConfig.isPad) return const SizedBox.shrink();
     if (Platform.isMacOS) {
       return SizedBox(
         height: 40,

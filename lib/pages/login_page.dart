@@ -431,6 +431,8 @@ class _LoginTitleBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // pad：无窗口顶栏，高度 0px（内容直接顶到屏幕顶部）
+    if (AppConfig.isPad) return const SizedBox.shrink();
     // macOS：左侧预留红黄绿按钮安全距离，右侧仅拖拽（无窗口按钮）
     if (Platform.isMacOS) {
       return SizedBox(

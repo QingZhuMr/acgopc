@@ -37,6 +37,13 @@ class ChatStore {
 
   void _notifyUnreadChanged() => chatUnreadTick.value++;
 
+  /// 会话摘要变化通知（会话列表刷新监听）。
+  /// 每次会话摘要（last_msg_time/text/未读）可能变化时 +1，监听方重新拉会话列表。
+  /// 覆盖「自己发消息」（未读不变但摘要/排序变了）这类 chatUnreadTick 不触发的场景。
+  final ValueNotifier<int> conversationTick = ValueNotifier<int>(0);
+
+  void _notifyConversationChanged() => conversationTick.value++;
+
   /// 登录后调用：切换聊天本地库到该账号专属文件（`acgo_chat_<uid>.db`）
   ///
   /// 切换账号后各账号会话/消息互不可见；首次登录某账号时自动从旧公共库
@@ -253,7 +260,7 @@ class ChatStore {
     }
     return openDatabase(
       target,
-      version: 8,
+      version: 9,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE local_chat_message (
@@ -316,6 +323,24 @@ class ChatStore {
         ''');
       },
       onUpgrade: (db, oldV, newV) async {
+        // v8 → v9：修正历史错误时间戳（毫秒误存为秒级单位）。
+        //
+        // 背景：早期版本发送消息时曾把 `millisecondsSinceEpoch`（13 位毫秒）
+        // 直接写入 create_time，而正常应为秒级（10 位）。显示时再 `*1000` 会
+        // 得到 58605 年之类的错误时间气泡。此处统一把毫秒级（> 1e11，秒级
+        // 到 5138 年才达该值，当前毫秒值约 1.7e12）除 1000 还原为秒。
+        if (oldV < 9) {
+          const msThreshold = 100000000000;
+          await db.execute(
+            'UPDATE local_chat_message SET create_time = create_time / 1000 WHERE create_time > $msThreshold',
+          );
+          await db.execute(
+            'UPDATE local_conversation SET last_msg_time = last_msg_time / 1000 WHERE last_msg_time > $msThreshold',
+          );
+          await db.execute(
+            'UPDATE local_conversation SET update_time = update_time / 1000 WHERE update_time > $msThreshold',
+          );
+        }
         // v7 → v8：本地已删除消息标记表（多选删除防"复活"）
         if (oldV < 8) {
           await db.execute('''
@@ -738,7 +763,9 @@ class ChatStore {
         whereArgs: [chatId],
       );
     }
-    // 未读数变化才通知（sync 批量重建 unreadDelta=0 不打扰角标）
+    // 会话摘要变化始终通知（发消息/收消息/摘要更新 → 会话列表需重排刷新）；
+    // 未读数变化才额外通知角标（sync 批量重建 unreadDelta=0 不打扰角标）
+    _notifyConversationChanged();
     if (unreadDelta != 0) _notifyUnreadChanged();
   }
 
@@ -934,6 +961,30 @@ class ChatStore {
     ]);
     await db.delete('local_chat_message',
         where: 'id IN ($ph)', whereArgs: unique);
+  }
+
+  /// 删除单条本地消息（移动端长按删除，仅本设备生效）：
+  /// 按 client_msg_id 定位，记录服务器 msg_id（防复活）→ 删行 → 清理图片缓存。
+  Future<void> deleteMessageByClientMsgId(String clientMsgId) async {
+    if (clientMsgId.isEmpty) return;
+    final db = await _database;
+    final rows = await db.query(
+      'local_chat_message',
+      columns: ['msg_id', 'image_local_path'],
+      where: 'client_msg_id = ?',
+      whereArgs: [clientMsgId],
+    );
+    if (rows.isEmpty) return;
+    await markLocallyDeleted([
+      for (final r in rows) (r['msg_id'] as num?)?.toInt() ?? 0,
+    ]);
+    await ChatStore.deleteLocalImages([
+      for (final r in rows)
+        if ((r['image_local_path'] as String? ?? '').isNotEmpty)
+          r['image_local_path'] as String,
+    ]);
+    await db.delete('local_chat_message',
+        where: 'client_msg_id = ?', whereArgs: [clientMsgId]);
   }
 
   /// 删除/隐藏会话：

@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 ///  - 侧边栏（副区块）背景为略深一层的颜色
 ///  - 内容页（主区块）背景为标准色
 /// 白天标准色：内容页 #FFFFFF，侧边栏 #F5F7FA
-/// 黑夜标准色：内容页 #23232A，侧边栏 #1E1E23
+/// 黑夜标准色：内容页 #000000，侧边栏 #1E1E23
 ///
 /// 所有颜色必须从本文件取值，禁止在业务代码中硬编码颜色。
 
@@ -84,7 +84,7 @@ abstract final class LightColors {
 
 /// 黑夜色板
 abstract final class DarkColors {
-  /// 内容页背景（主区块标准色）
+  /// 内容页背景（主区块标准色，夜间深灰蓝）
   static const Color bg = Color(0xFF23232A);
 
   /// 侧边栏背景（副区块标准色）

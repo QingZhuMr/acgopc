@@ -1,5 +1,7 @@
 # Liquid Glass Widgets
 
+> **【2026-08-20 已弃用】** 本项目已移除 `liquid_glass_widgets` 插件（`pubspec.yaml` 依赖、`main.dart` 的 `initialize()/wrap()`、`GlassScaffold`/`GlassTabBar`/`GlassAppBar` 全部删除）。移动端底部导航栏改为**自绘高斯模糊玻璃**（`home_page.dart` 内 `_GlassBottomNav`，BackdropFilter + 边框 + 圆角，参考 PC 探索页 `_GlassBlock` 风格），顶部返回栏改为 PC 客户端同款按钮（`mobile/widgets/pc_style_back_button.dart`）。本文档为插件官方 README 存档，仅作历史参考，**勿再引用**。实现规范见 `UI规范.md` 第 11 章 / `移动端UI规范.md` §4.3。
+
 A comprehensive Flutter package implementing Apple's Liquid Glass design system with 26 beautiful, composable glass-morphic widgets.
 
 [![pub package](https://img.shields.io/pub/v/liquid_glass_widgets.svg)](https://pub.dev/packages/liquid_glass_widgets)
